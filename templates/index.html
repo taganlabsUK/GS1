@@ -357,6 +357,39 @@
                     <!-- Populated by JavaScript -->
                 </div>
             </div>
+
+            <!-- Trust signals & policies issues -->
+            <div id="trust-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
+                <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
+                    <i class="fas fa-shield-alt w-5 h-5 text-yellow-500"></i>
+                    <span>Trust Signals &amp; Policies</span>
+                </h4>
+                <div id="trust-list" class="space-y-1 max-h-48 overflow-y-auto">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+
+            <!-- Restricted content & blocks issues -->
+            <div id="restricted-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
+                <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
+                    <i class="fas fa-exclamation-triangle w-5 h-5 text-orange-500"></i>
+                    <span>Restricted Content &amp; Blocks</span>
+                </h4>
+                <div id="restricted-list" class="space-y-1 max-h-48 overflow-y-auto">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+
+            <!-- Structured data issues -->
+            <div id="structured-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
+                <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
+                    <i class="fas fa-code w-5 h-5 text-indigo-500"></i>
+                    <span>Structured Data Issues</span>
+                </h4>
+                <div id="structured-list" class="space-y-1 max-h-48 overflow-y-auto">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
         </div>
     </div>
 </section>
@@ -441,6 +474,16 @@ const finalAlt = document.getElementById('final-alt');
 // List container for alt text issues and section reference
 const altList = document.getElementById('alt-list');
 const altSection = document.getElementById('alt-section');
+
+// Trust signals & policies elements
+const trustSection = document.getElementById('trust-section');
+const trustList = document.getElementById('trust-list');
+// Restricted content & blocks elements
+const restrictedSection = document.getElementById('restricted-section');
+const restrictedList = document.getElementById('restricted-list');
+// Structured data issues elements
+const structuredSection = document.getElementById('structured-section');
+const structuredList = document.getElementById('structured-list');
 
 // Mismatch elements for displaying product title vs URL slug mismatches
 // When mismatches are present, the mismatch section will be shown and
@@ -594,6 +637,121 @@ function updateAltSection(issues) {
             </div>
         `;
         altList.appendChild(row);
+    });
+}
+
+// Update trust signal & policy issues section
+function updateTrustSection(issues) {
+    // Clear existing entries
+    if (typeof trustList !== 'undefined') {
+        trustList.innerHTML = '';
+    }
+    // Hide section if no issues
+    if (!issues || issues.length === 0) {
+        if (typeof trustSection !== 'undefined') {
+            trustSection.classList.add('hidden');
+        }
+        return;
+    }
+    // Show section and populate list
+    if (typeof trustSection !== 'undefined') {
+        trustSection.classList.remove('hidden');
+    }
+    // Show up to 50 latest issues
+    issues.slice(-50).forEach(item => {
+        try {
+            const [pageUrl, contactIssues, policyIssues, sslIssues] = item;
+            const parts = [];
+            if (contactIssues && contactIssues.length > 0) {
+                parts.push('Contact: ' + contactIssues.join(', '));
+            }
+            if (policyIssues && policyIssues.length > 0) {
+                parts.push('Policies: ' + policyIssues.join(', '));
+            }
+            if (sslIssues && sslIssues.length > 0) {
+                parts.push('SSL: ' + sslIssues.join(', '));
+            }
+            const row = document.createElement('div');
+            row.className = 'p-2 border-b';
+            row.innerHTML = `<a href="${pageUrl}" class="text-primary-600 dark:text-primary-300 underline break-all" target="_blank">${pageUrl}</a><span class="text-sm text-gray-500 dark:text-gray-400"> – ${parts.join(' | ')}</span>`;
+            trustList.appendChild(row);
+        } catch (e) {
+            console.error('Error rendering trust issue', e);
+        }
+    });
+}
+
+// Update restricted content & blocks section
+function updateRestrictedSection(restrictedPages, metaPages, disallowed) {
+    // Clear existing entries
+    if (typeof restrictedList !== 'undefined') {
+        restrictedList.innerHTML = '';
+    }
+    let any = false;
+    // Add restricted content pages
+    if (restrictedPages && Array.isArray(restrictedPages)) {
+        restrictedPages.slice(-50).forEach(item => {
+            try {
+                const [pageUrl, categories] = item;
+                const row = document.createElement('div');
+                row.className = 'p-2 border-b';
+                row.innerHTML = `<a href="${pageUrl}" class="text-primary-600 dark:text-primary-300 underline break-all" target="_blank">${pageUrl}</a><span class="text-sm text-gray-500 dark:text-gray-400"> – Categories: ${categories.join(', ')}</span>`;
+                restrictedList.appendChild(row);
+                any = true;
+            } catch (e) {}
+        });
+    }
+    // Add meta robots pages
+    if (metaPages && Array.isArray(metaPages)) {
+        metaPages.slice(-50).forEach(item => {
+            try {
+                const [pageUrl, directives] = item;
+                const row = document.createElement('div');
+                row.className = 'p-2 border-b';
+                row.innerHTML = `<a href="${pageUrl}" class="text-primary-600 dark:text-primary-300 underline break-all" target="_blank">${pageUrl}</a><span class="text-sm text-gray-500 dark:text-gray-400"> – Meta: ${directives.join(', ')}</span>`;
+                restrictedList.appendChild(row);
+                any = true;
+            } catch (e) {}
+        });
+    }
+    // Add robots.txt disallowed paths
+    if (disallowed && Array.isArray(disallowed)) {
+        disallowed.slice(-50).forEach(path => {
+            try {
+                const row = document.createElement('div');
+                row.className = 'p-2 border-b';
+                row.innerHTML = `<span class="text-sm text-gray-500 dark:text-gray-400">Disallow: ${path}</span>`;
+                restrictedList.appendChild(row);
+                any = true;
+            } catch (e) {}
+        });
+    }
+    // Show or hide section
+    if (any) {
+        if (typeof restrictedSection !== 'undefined') restrictedSection.classList.remove('hidden');
+    } else {
+        if (typeof restrictedSection !== 'undefined') restrictedSection.classList.add('hidden');
+    }
+}
+
+// Update structured data issues section
+function updateStructuredSection(issues) {
+    if (typeof structuredList !== 'undefined') {
+        structuredList.innerHTML = '';
+    }
+    if (!issues || issues.length === 0) {
+        if (typeof structuredSection !== 'undefined') structuredSection.classList.add('hidden');
+        return;
+    }
+    if (typeof structuredSection !== 'undefined') structuredSection.classList.remove('hidden');
+    issues.slice(-50).forEach(item => {
+        try {
+            const [pageUrl, errs] = item;
+            const row = document.createElement('div');
+            row.className = 'p-2 border-b';
+            row.innerHTML = `<a href="${pageUrl}" class="text-primary-600 dark:text-primary-300 underline break-all" target="_blank">${pageUrl}</a><span class="text-sm text-gray-500 dark:text-gray-400"> – ${errs.join('; ')}</span>`;
+            structuredList.appendChild(row);
+        } catch (e) {}
     });
 }
 
@@ -1116,6 +1274,10 @@ function updateProgress(data) {
         updateBannedSection(data.banned_keyword_pages);
         // Update alt text issues section
         updateAltSection(data.alt_text_issues);
+        // Update new sections for trust, restricted and structured data issues
+        updateTrustSection(data.trust_signal_issues);
+        updateRestrictedSection(data.restricted_content_pages, data.meta_robots_pages, data.robots_disallowed);
+        updateStructuredSection(data.structured_data_issues);
         // Update compliance progress circle
         updateCompliance(data.compliance || 0, 'progress');
     } catch (e) {
@@ -1529,6 +1691,14 @@ function resetAll() {
     if (typeof trustCount !== 'undefined') trustCount.textContent = '0';
     if (typeof restrictedCount !== 'undefined') restrictedCount.textContent = '0';
     if (typeof structuredCount !== 'undefined') structuredCount.textContent = '0';
+
+    // Reset trust, restricted and structured sections
+    if (typeof trustSection !== 'undefined') trustSection.classList.add('hidden');
+    if (typeof trustList !== 'undefined') trustList.innerHTML = '';
+    if (typeof restrictedSection !== 'undefined') restrictedSection.classList.add('hidden');
+    if (typeof restrictedList !== 'undefined') restrictedList.innerHTML = '';
+    if (typeof structuredSection !== 'undefined') structuredSection.classList.add('hidden');
+    if (typeof structuredList !== 'undefined') structuredList.innerHTML = '';
 
     // Reset client-side trackers for monotonic counts and denominators. Without
     // resetting these, values from a previous crawl may persist and cause
