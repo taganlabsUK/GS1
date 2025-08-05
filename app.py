@@ -36,7 +36,7 @@ import hashlib
 from collections import deque
 # Include Optional for type annotations.  Without importing Optional, using it
 # in type hints (e.g. fetch_shopify_products) will raise a NameError at runtime.
-from typing import List, Set, Optional  # For type annotations used in image scanning
+from typing import List, Set, Optional, Dict  # For type annotations used in image scanning
 
 # -----------------------------------------------------------------------------
 # CAPTCHA utilities
@@ -486,6 +486,12 @@ class LinkCrawler:
         # de‑duplicate images globally.  Currently unused but kept for
         # potential future enhancements.
         self.global_image_basenames: Set[str] = set()
+
+        # Track policy pages that have already been analysed.  This set
+        # prevents redundant network requests and duplicate issue reports
+        # when multiple pages link to the same shipping or return/refund
+        # policy.  Each entry is the absolute URL of the policy page.
+        self.analyzed_policy_pages: Set[str] = set()
 
         # Parse robots.txt once at the start of the crawl.  This helps
         # identify any disallowed sections that could prevent Google
@@ -1260,24 +1266,58 @@ class LinkCrawler:
                 'returns': ['return', 'refund', 'exchange'],
                 'privacy': ['privacy']
             }
-            # Normalize anchor text
+            # Normalize anchor text and capture policy links when found
             found_policies = {k: False for k in policy_keywords.keys()}
+            policy_links: Dict[str, str] = {}
             for a in soup.find_all('a'):
                 try:
                     anchor_text = a.get_text(strip=True).lower()
+                    href = a.get('href') or ''
                     for key, variants in policy_keywords.items():
                         if found_policies[key]:
                             continue
                         for variant in variants:
                             if variant in anchor_text:
                                 found_policies[key] = True
+                                # Record the first encountered link for this policy
+                                if href:
+                                    try:
+                                        abs_link = urljoin(url, href)
+                                        policy_links.setdefault(key, abs_link)
+                                    except Exception:
+                                        pass
                                 break
+                    # early exit if all found
+                    if all(found_policies.values()):
+                        break
                 except Exception:
                     continue
             # For each required policy not found, append to issues
             for key, present in found_policies.items():
                 if not present:
                     policy_issues.append(f'missing {key} policy')
+            # Analyse shipping and return/refund policy pages for compliance
+            # only once per unique URL to avoid redundant requests
+            # Analyse shipping policy
+            ship_url = policy_links.get('shipping')
+            if ship_url and ship_url not in self.analyzed_policy_pages:
+                try:
+                    ship_issues = self._analyze_shipping_policy(ship_url)
+                    if ship_issues:
+                        policy_issues.extend([f'shipping policy: {msg}' for msg in ship_issues])
+                    self.analyzed_policy_pages.add(ship_url)
+                except Exception:
+                    pass
+            # Analyse returns/refund policy
+            ret_url = policy_links.get('returns')
+            if ret_url and ret_url not in self.analyzed_policy_pages:
+                try:
+                    ret_issues = self._analyze_return_policy(ret_url)
+                    if ret_issues:
+                        policy_issues.extend([f'return policy: {msg}' for msg in ret_issues])
+                    self.analyzed_policy_pages.add(ret_url)
+                except Exception:
+                    pass
         except Exception:
             pass
         # SSL/HTTPS check: require HTTPS scheme
@@ -1296,8 +1336,11 @@ class LinkCrawler:
             # "100%" or "guaranteed" are considered unrealistic under
             # misrepresentation guidelines.
             banned_claims = [
-                'best price', 'lowest price', 'guaranteed', '100%', '100 percent',
-                'no risk', 'money back guarantee'
+                # Flag marketing language that implies unrealistic promises.  Do
+                # not include generic numeric phrases like "100%" or "100 percent"
+                # since these can legitimately refer to product materials (e.g.,
+                # "100% cotton").
+                'best price', 'lowest price', 'guaranteed', 'no risk', 'money back guarantee'
             ]
             for claim in banned_claims:
                 try:
@@ -1477,6 +1520,77 @@ class LinkCrawler:
         if errors:
             with self.result.lock:
                 self.result.structured_data_issues.append((url, errors))
+
+    # ---------------------------------------------------------------------
+    # Policy page analysis helpers
+    #
+    def _analyze_shipping_policy(self, page_url: str) -> List[str]:
+        """Download and analyse a shipping policy page for required content.
+
+        Returns a list of human‑readable issue descriptions when required
+        information is missing.  This function does not raise exceptions on
+        network errors; instead, it returns a single issue explaining the
+        failure.
+        """
+        issues: List[str] = []
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                              'AppleWebKit/537.36 (KHTML, like Gecko) '
+                              'Chrome/122.0.0.0 Safari/537.36'
+            }
+            resp = requests.get(page_url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                issues.append('inaccessible (HTTP ' + str(resp.status_code) + ')')
+                return issues
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            text = soup.get_text(separator=' ', strip=True).lower()
+            # Ensure the page talks about shipping or delivery
+            if not any(word in text for word in ['shipping', 'delivery']):
+                issues.append('missing shipping/delivery information')
+            # Check for estimated delivery time (looks for numbers with days/weeks)
+            if not re.search(r'\b\d+\s*(business\s*)?(day|days|week|weeks)\b', text):
+                issues.append('missing estimated delivery time')
+            # Check for cost information (mentions cost, fee, charge, price or free)
+            if not any(word in text for word in ['free', 'cost', 'fee', 'charge', 'price']):
+                issues.append('missing shipping cost information')
+        except Exception:
+            issues.append('failed to fetch shipping policy')
+        return issues
+
+    def _analyze_return_policy(self, page_url: str) -> List[str]:
+        """Download and analyse a return/refund policy page for required content.
+
+        Returns a list of issue descriptions if essential elements are missing.
+        """
+        issues: List[str] = []
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                              'AppleWebKit/537.36 (KHTML, like Gecko) '
+                              'Chrome/122.0.0.0 Safari/537.36'
+            }
+            resp = requests.get(page_url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                issues.append('inaccessible (HTTP ' + str(resp.status_code) + ')')
+                return issues
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            text = soup.get_text(separator=' ', strip=True).lower()
+            # Ensure the policy mentions returns, refunds or exchanges
+            if not any(word in text for word in ['return', 'refund', 'exchange']):
+                issues.append('missing returns/refunds section')
+            # Check for return period (number with days/weeks)
+            if not re.search(r'\b\d+\s*(business\s*)?(day|days|week|weeks)\b', text):
+                issues.append('missing return period')
+            # Check for condition requirements (unused, original, packaging)
+            if not any(word in text for word in ['unused', 'original', 'packaging', 'receipt', 'condition']):
+                issues.append('missing condition requirements')
+            # Check for instructions or contact details
+            if not any(word in text for word in ['contact', 'email', 'support', 'address', 'phone']):
+                issues.append('missing return instructions or contact information')
+        except Exception:
+            issues.append('failed to fetch return policy')
+        return issues
 
 def normalize_url(url):
     """Normalize and validate URL input.
