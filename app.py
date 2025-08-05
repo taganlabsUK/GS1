@@ -268,6 +268,47 @@ class CrawlResult:
         # Note: alt_check_pages and alt_checks_total are intentionally
         # omitted since the alt text checker has been removed.
 
+        # ---------------------------------------------------------------------
+        # Trust signals and policy checks
+        #
+        # trust_signal_issues stores tuples of the form
+        # (url, contact_issues, policy_issues, ssl_issues) where each list
+        # contains human‑readable strings describing missing or invalid trust
+        # signals on a page.  For example, contact_issues might include
+        # "missing email" or "no phone number".  policy_issues might list
+        # missing Terms, Shipping, Returns or Privacy pages.  ssl_issues will
+        # flag pages served over HTTP or sites with invalid TLS certificates.
+        self.trust_signal_issues = []
+        # Count how many pages were scanned for trust signals.  This allows the
+        # UI to display a ratio of issues to pages checked.
+        self.trust_check_pages = 0
+
+        # ---------------------------------------------------------------------
+        # Restricted content and crawl blocking checks
+        #
+        # restricted_content_pages stores tuples of the form (url, categories)
+        # where categories is a list of prohibited themes detected on the page
+        # (e.g. ["weapons", "tobacco"]).  robots_disallowed records
+        # directives parsed from robots.txt that could block product pages
+        # from Google’s crawlers.  meta_robots_pages records pages that set
+        # restrictive meta robots tags such as noindex or nofollow.
+        self.restricted_content_pages = []
+        self.robots_disallowed = []
+        self.meta_robots_pages = []
+        # Counter for pages scanned for restricted content and meta robots tags
+        self.restricted_check_pages = 0
+
+        # ---------------------------------------------------------------------
+        # Structured data validation checks
+        #
+        # structured_data_issues stores tuples of the form (url, errors) where
+        # errors is a list of strings describing missing or invalid fields
+        # in schema.org Product markup on a page.  This helps merchants fix
+        # structured data so that Google can generate rich product snippets.
+        self.structured_data_issues = []
+        # Counter for pages scanned for structured data
+        self.structured_check_pages = 0
+
         # Placeholder to maintain backward compatibility when loading from
         # serialized sessions.  Initialize alt text issue structures.
         self.alt_text_issues = []
@@ -312,6 +353,17 @@ class CrawlResult:
                 , 'alt_text_issues': list(self.alt_text_issues)
                 , 'alt_text_count': self.alt_text_count
                 , 'alt_checks_total': self.alt_checks_total
+                # Trust signals and policies
+                , 'trust_signal_issues': list(self.trust_signal_issues)
+                , 'trust_check_pages': self.trust_check_pages
+                # Restricted content and crawl blocking
+                , 'restricted_content_pages': list(self.restricted_content_pages)
+                , 'robots_disallowed': list(self.robots_disallowed)
+                , 'meta_robots_pages': list(self.meta_robots_pages)
+                , 'restricted_check_pages': self.restricted_check_pages
+                # Structured data validation
+                , 'structured_data_issues': list(self.structured_data_issues)
+                , 'structured_check_pages': self.structured_check_pages
             }
     
     def to_dict(self):
@@ -344,6 +396,17 @@ class CrawlResult:
             , 'alt_text_issues': list(self.alt_text_issues)
             , 'alt_text_count': self.alt_text_count
             , 'alt_checks_total': self.alt_checks_total
+            # Trust signals and policies
+            , 'trust_signal_issues': list(self.trust_signal_issues)
+            , 'trust_check_pages': self.trust_check_pages
+            # Restricted content and crawl blocking
+            , 'restricted_content_pages': list(self.restricted_content_pages)
+            , 'robots_disallowed': list(self.robots_disallowed)
+            , 'meta_robots_pages': list(self.meta_robots_pages)
+            , 'restricted_check_pages': self.restricted_check_pages
+            # Structured data validation
+            , 'structured_data_issues': list(self.structured_data_issues)
+            , 'structured_check_pages': self.structured_check_pages
             }
 
     def save_to_redis(self):
@@ -389,6 +452,18 @@ class CrawlResult:
         result.alt_text_issues = data.get('alt_text_issues', [])
         result.alt_text_count = data.get('alt_text_count', len(result.alt_text_issues))
         result.alt_checks_total = data.get('alt_checks_total', 0)
+
+        # Restore trust signals and policies
+        result.trust_signal_issues = data.get('trust_signal_issues', [])
+        result.trust_check_pages = data.get('trust_check_pages', 0)
+        # Restore restricted content and crawl blocking
+        result.restricted_content_pages = data.get('restricted_content_pages', [])
+        result.robots_disallowed = data.get('robots_disallowed', [])
+        result.meta_robots_pages = data.get('meta_robots_pages', [])
+        result.restricted_check_pages = data.get('restricted_check_pages', 0)
+        # Restore structured data validation
+        result.structured_data_issues = data.get('structured_data_issues', [])
+        result.structured_check_pages = data.get('structured_check_pages', 0)
         return result
 
 class LinkCrawler:
@@ -411,6 +486,41 @@ class LinkCrawler:
         # de‑duplicate images globally.  Currently unused but kept for
         # potential future enhancements.
         self.global_image_basenames: Set[str] = set()
+
+        # Parse robots.txt once at the start of the crawl.  This helps
+        # identify any disallowed sections that could prevent Google
+        # Merchant Center from accessing product or policy pages.  Results
+        # are stored on the CrawlResult so they can be reported via the UI.
+        try:
+            parsed = urlparse(start_url)
+            robots_domain = parsed.netloc.replace('www.', '')
+            robots_url = f"https://{robots_domain}/robots.txt"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                              'AppleWebKit/537.36 (KHTML, like Gecko) '
+                              'Chrome/122.0.0.0 Safari/537.36'
+            }
+            resp = requests.get(robots_url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                disallowed = []
+                for line in resp.text.splitlines():
+                    try:
+                        line_stripped = line.strip()
+                        if not line_stripped or line_stripped.startswith('#'):
+                            continue
+                        parts = line_stripped.split(':', 1)
+                        if len(parts) == 2 and parts[0].lower() == 'disallow':
+                            path = parts[1].strip()
+                            if path:
+                                disallowed.append(path)
+                    except Exception:
+                        continue
+                if disallowed:
+                    with self.result.lock:
+                        self.result.robots_disallowed.extend(disallowed)
+        except Exception:
+            # Fail silently; robots.txt may be missing or inaccessible
+            pass
 
         # Maintain a mapping from discovered URLs to the page where they were found.
         # This allows us to report the source page when a broken internal link is
@@ -927,6 +1037,52 @@ class LinkCrawler:
             except Exception as e:
                 logger.debug(f"Error performing alt text scan for {url}: {e}")
 
+            # -----------------------------------------------------------------
+            # Trust signals & policies check
+            #
+            # Examine the current page for evidence of contact information,
+            # required legal/policy pages, and HTTPS enforcement.  Contact
+            # information (email, phone number, physical address) and
+            # policies (Terms, Shipping, Returns, Privacy) are essential for
+            # Merchant Center compliance.  This check records missing items
+            # in result.trust_signal_issues and increments a page counter.
+            try:
+                self._check_trust_policies(url, soup)
+            except Exception as e:
+                logger.debug(f"Error checking trust signals for {url}: {e}")
+
+            # -----------------------------------------------------------------
+            # Restricted content & blocking directives check
+            #
+            # Scan for prohibited categories, robots meta tags and update
+            # restricted content issues.  This check helps identify pages
+            # containing content that could violate Google policies or pages
+            # inadvertently blocked from crawling via meta robots tags.
+            try:
+                self._check_restricted_content(url, soup)
+            except Exception as e:
+                logger.debug(f"Error checking restricted content for {url}: {e}")
+
+            # -----------------------------------------------------------------
+            # Structured data validation check
+            #
+            # Validate schema.org Product markup on product pages.  Only run
+            # this check for pages identified as product pages (contains
+            # '/products/' and belongs to the same domain).  Issues are
+            # recorded in result.structured_data_issues.
+            try:
+                # Reuse earlier determination of product page if available
+                is_prod = False
+                try:
+                    is_prod = is_product_page
+                except Exception:
+                    # Fallback: simple check
+                    is_prod = "/products/" in url
+                if is_prod:
+                    self._check_structured_data(url, soup)
+            except Exception as e:
+                logger.debug(f"Error validating structured data for {url}: {e}")
+
             # Extract all links
             links_found = 0
             for a_tag in soup.find_all("a", href=True):
@@ -1048,6 +1204,257 @@ class LinkCrawler:
 
         except Exception as e:
             logger.debug(f"Could not check outbound link {url}: {e}")
+
+    # -------------------------------------------------------------------------
+    # New check functions for GMC Scout V1
+    #
+    def _check_trust_policies(self, url: str, soup: BeautifulSoup) -> None:
+        """
+        Check for trust signals and required policy pages on the current page.
+
+        This method inspects the page content for contact information
+        (email, phone, physical address), links to legal pages (Terms,
+        Shipping, Returns/Refunds, Privacy) and verifies that the page is
+        served over HTTPS.  Any missing items are recorded on the
+        CrawlResult.trust_signal_issues list along with the URL.
+
+        Args:
+            url: The URL of the page being checked.
+            soup: BeautifulSoup object for the page HTML.
+        """
+        # Increment page counter
+        with self.result.lock:
+            self.result.trust_check_pages += 1
+        contact_issues: list[str] = []
+        policy_issues: list[str] = []
+        ssl_issues: list[str] = []
+        try:
+            text = soup.get_text(separator=' ', strip=True)
+        except Exception:
+            text = ''
+        # Email detection
+        try:
+            if not re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text):
+                contact_issues.append('missing email')
+        except Exception:
+            pass
+        # Phone detection (simple pattern for digits, spaces, dashes, brackets)
+        try:
+            if not re.search(r"\+?\d[\d\s\-()]{7,}", text):
+                contact_issues.append('missing phone number')
+        except Exception:
+            pass
+        # Physical address detection: search for common street keywords
+        try:
+            address_keywords = ['street', 'st.', 'road', 'rd', 'avenue', 'ave', 'lane', 'ln', 'drive', 'dr', 'boulevard', 'blvd']
+            found_address = any(kw in text.lower() for kw in address_keywords)
+            if not found_address:
+                contact_issues.append('missing physical address')
+        except Exception:
+            pass
+        # Legal pages detection: search for anchor tags containing policy keywords
+        try:
+            policy_keywords = {
+                'terms': ['terms', 'conditions', 'terms of service', 'terms & conditions'],
+                'shipping': ['shipping', 'delivery'],
+                'returns': ['return', 'refund', 'exchange'],
+                'privacy': ['privacy']
+            }
+            # Normalize anchor text
+            found_policies = {k: False for k in policy_keywords.keys()}
+            for a in soup.find_all('a'):
+                try:
+                    anchor_text = a.get_text(strip=True).lower()
+                    for key, variants in policy_keywords.items():
+                        if found_policies[key]:
+                            continue
+                        for variant in variants:
+                            if variant in anchor_text:
+                                found_policies[key] = True
+                                break
+                except Exception:
+                    continue
+            # For each required policy not found, append to issues
+            for key, present in found_policies.items():
+                if not present:
+                    policy_issues.append(f'missing {key} policy')
+        except Exception:
+            pass
+        # SSL/HTTPS check: require HTTPS scheme
+        try:
+            if not url.lower().startswith('https://'):
+                ssl_issues.append('page not served over HTTPS')
+        except Exception:
+            pass
+        # Record issues if any exist
+        if contact_issues or policy_issues or ssl_issues:
+            with self.result.lock:
+                self.result.trust_signal_issues.append((url, contact_issues, policy_issues, ssl_issues))
+
+    def _check_restricted_content(self, url: str, soup: BeautifulSoup) -> None:
+        """
+        Scan the page for restricted content categories and meta robots tags.
+
+        This method looks for keywords associated with prohibited categories
+        such as weapons, tobacco, explosives, adult content and counterfeits.
+        It also examines meta robots directives to identify pages that block
+        indexing or following.  Results are stored on the CrawlResult.
+
+        Args:
+            url: The page URL.
+            soup: BeautifulSoup instance.
+        """
+        # Increment restricted content page counter
+        with self.result.lock:
+            self.result.restricted_check_pages += 1
+        categories_found: list[str] = []
+        try:
+            page_text = soup.get_text(separator=' ', strip=True).lower()
+        except Exception:
+            page_text = ''
+        # Define prohibited keyword categories.  Each entry is a tuple of
+        # (category_name, list of keywords)
+        prohibited_categories = [
+            ('weapons', ['weapon', 'firearm', 'gun', 'rifle', 'pistol', 'ammo', 'ammunition']),
+            ('tobacco', ['tobacco', 'cigarette', 'cigar', 'vape', 'nicotine']),
+            ('explosives', ['explosive', 'bomb', 'grenade', 'dynamite']),
+            ('alcohol', ['alcohol', 'beer', 'wine', 'whiskey', 'vodka']),
+            ('adult', ['porn', 'adult', 'xxx', 'erotic', 'sex toy']),
+            ('counterfeit', ['counterfeit', 'fake', 'replica']),
+            ('controlled', ['opioid', 'marijuana', 'cocaine', 'heroin', 'methamphetamine'])
+        ]
+        try:
+            for category, keywords in prohibited_categories:
+                for kw in keywords:
+                    if kw in page_text:
+                        categories_found.append(category)
+                        break
+        except Exception:
+            pass
+        # Meta robots detection
+        meta_issues: list[str] = []
+        try:
+            for meta in soup.find_all('meta'):
+                try:
+                    name_attr = (meta.get('name') or meta.get('property') or '').lower()
+                    content_attr = (meta.get('content') or '').lower()
+                    if name_attr in ['robots', 'googlebot'] and content_attr:
+                        # record content of meta robots tag
+                        meta_issues.append(content_attr)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Record meta robots restrictions
+        if meta_issues:
+            with self.result.lock:
+                self.result.meta_robots_pages.append((url, meta_issues))
+        # Record restricted categories
+        if categories_found:
+            with self.result.lock:
+                self.result.restricted_content_pages.append((url, categories_found))
+
+    def _check_structured_data(self, url: str, soup: BeautifulSoup) -> None:
+        """
+        Validate schema.org Product structured data on the page.
+
+        This method searches for JSON‑LD scripts and microdata representing
+        Product entities.  It then verifies that required fields (name,
+        description, image, price, availability) are present and well
+        formatted.  Any missing or invalid fields are recorded on the
+        CrawlResult.
+
+        Args:
+            url: URL of the page being validated.
+            soup: Parsed HTML.
+        """
+        # Increment structured data page counter
+        with self.result.lock:
+            self.result.structured_check_pages += 1
+        errors: list[str] = []
+        # Helper to validate a Product object
+        def validate_product_schema(product_data: dict, container_label: str = ''):
+            local_errors: list[str] = []
+            # Required fields and simple type checks
+            required_fields = ['name', 'description', 'image', 'price', 'availability']
+            for field in required_fields:
+                if field not in product_data or not product_data[field]:
+                    local_errors.append(f"missing {field}")
+            # If price is present, ensure it contains digits and optionally currency symbol
+            price_val = product_data.get('price')
+            if price_val:
+                try:
+                    # Accept formats like 9.99, 9, 9.99 USD
+                    price_str = str(price_val)
+                    if not re.search(r"\d", price_str):
+                        local_errors.append('invalid price')
+                except Exception:
+                    local_errors.append('invalid price')
+            # Availability: check against known statuses
+            avail_val = product_data.get('availability')
+            if avail_val:
+                valid_avail = ['instock', 'in stock', 'outofstock', 'out of stock', 'preorder', 'backorder']
+                if str(avail_val).lower() not in valid_avail:
+                    local_errors.append('invalid availability')
+            if local_errors:
+                for err in local_errors:
+                    errors.append(f"{container_label}{err}")
+
+        # JSON-LD detection
+        try:
+            for script in soup.find_all('script', type='application/ld+json'):
+                try:
+                    json_text = script.string or ''
+                    data = json.loads(json_text)
+                    # JSON-LD may be a list or dict
+                    items = data if isinstance(data, list) else [data]
+                    for item in items:
+                        try:
+                            if isinstance(item, dict):
+                                item_type = item.get('@type') or item.get('type')
+                                # Some implementations wrap Product in '@graph'
+                                if not item_type and '@graph' in item:
+                                    for subitem in item['@graph']:
+                                        try:
+                                            sub_type = subitem.get('@type') or subitem.get('type')
+                                            if sub_type and 'product' in str(sub_type).lower():
+                                                validate_product_schema(subitem, '')
+                                        except Exception:
+                                            continue
+                                    continue
+                                if item_type and 'product' in str(item_type).lower():
+                                    validate_product_schema(item, '')
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Microdata detection: look for itemscope/itemtype
+        try:
+            for tag in soup.find_all(attrs={'itemscope': True, 'itemtype': True}):
+                try:
+                    item_type = tag.get('itemtype')
+                    if item_type and 'product' in item_type.lower():
+                        # Collect itemprops from children
+                        data = {}
+                        for child in tag.find_all(attrs={'itemprop': True}):
+                            try:
+                                prop = child.get('itemprop')
+                                value = child.get('content') or child.get_text(strip=True)
+                                if prop and value:
+                                    data[prop] = value
+                            except Exception:
+                                continue
+                        validate_product_schema(data, '')
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Record errors
+        if errors:
+            with self.result.lock:
+                self.result.structured_data_issues.append((url, errors))
 
 def normalize_url(url):
     """Normalize and validate URL input.
@@ -1644,6 +2051,14 @@ def crawl_status():
         # front‑end can display it in the final results header.  The
         # `result` object always holds the current domain.
         'domain': result.domain
+                , 'trust_signal_issues': status.get('trust_signal_issues', [])
+                , 'trust_check_pages': status.get('trust_check_pages', 0)
+                , 'restricted_content_pages': status.get('restricted_content_pages', [])
+                , 'robots_disallowed': status.get('robots_disallowed', [])
+                , 'meta_robots_pages': status.get('meta_robots_pages', [])
+                , 'restricted_check_pages': status.get('restricted_check_pages', 0)
+                , 'structured_data_issues': status.get('structured_data_issues', [])
+                , 'structured_check_pages': status.get('structured_check_pages', 0)
     }
     
     if status['is_complete']:
@@ -1798,6 +2213,19 @@ def export_txt(result, domain_clean, timestamp):
     compliance = 100.0 * quality
     content.append(f"Compliance: {round(compliance, 1)}%")
     content.append(f"Banned Keyword Pages: {len(getattr(result, 'banned_keyword_pages', []))}")
+    # New summary lines for trust signals, restricted content and structured data
+    try:
+        content.append(f"Trust Signal Issues: {len(getattr(result, 'trust_signal_issues', []))}")
+    except Exception:
+        content.append("Trust Signal Issues: 0")
+    try:
+        content.append(f"Restricted Content Pages: {len(getattr(result, 'restricted_content_pages', []))}")
+    except Exception:
+        content.append("Restricted Content Pages: 0")
+    try:
+        content.append(f"Structured Data Issues: {len(getattr(result, 'structured_data_issues', []))}")
+    except Exception:
+        content.append("Structured Data Issues: 0")
     content.append("")
     
     content.append("SUMMARY")
@@ -1866,6 +2294,69 @@ def export_txt(result, domain_clean, timestamp):
                 ratio_pct = 0
             words_str = ", ".join(banned_words)
             content.append(f"{page_url} | Keywords: {words_str} | Match: {ratio_pct}%")
+        content.append("")
+
+    # Include trust signal & policy issues
+    if getattr(result, 'trust_signal_issues', None):
+        content.append("TRUST SIGNAL & POLICY ISSUES")
+        content.append("-" * 20)
+        for page_url, contact_issues, policy_issues, ssl_issues in result.trust_signal_issues:
+            try:
+                parts = []
+                if contact_issues:
+                    parts.append("Contact: " + ", ".join(contact_issues))
+                if policy_issues:
+                    parts.append("Policies: " + ", ".join(policy_issues))
+                if ssl_issues:
+                    parts.append("SSL: " + ", ".join(ssl_issues))
+                summary = " | ".join(parts) if parts else ""
+                content.append(f"{page_url} | {summary}")
+            except Exception:
+                continue
+        content.append("")
+
+    # Include restricted content pages
+    if getattr(result, 'restricted_content_pages', None):
+        content.append("PAGES WITH RESTRICTED CONTENT")
+        content.append("-" * 20)
+        for page_url, cats in result.restricted_content_pages:
+            try:
+                content.append(f"{page_url} | Categories: {', '.join(cats)}")
+            except Exception:
+                continue
+        content.append("")
+
+    # Include pages with meta robots restrictions
+    if getattr(result, 'meta_robots_pages', None):
+        content.append("META ROBOTS RESTRICTIONS")
+        content.append("-" * 20)
+        for page_url, directives in result.meta_robots_pages:
+            try:
+                content.append(f"{page_url} | Directives: {', '.join(directives)}")
+            except Exception:
+                continue
+        content.append("")
+
+    # Include disallowed paths from robots.txt
+    if getattr(result, 'robots_disallowed', None):
+        content.append("ROBOTS.TXT DISALLOWED PATHS")
+        content.append("-" * 20)
+        try:
+            for path in result.robots_disallowed:
+                content.append(path)
+        except Exception:
+            pass
+        content.append("")
+
+    # Include structured data issues
+    if getattr(result, 'structured_data_issues', None):
+        content.append("STRUCTURED DATA ISSUES")
+        content.append("-" * 20)
+        for page_url, errs in result.structured_data_issues:
+            try:
+                content.append(f"{page_url} | " + "; ".join(errs))
+            except Exception:
+                continue
         content.append("")
 
     # Do not include a section for image alt text issues since the
