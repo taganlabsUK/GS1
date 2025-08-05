@@ -21,6 +21,8 @@ import io
 # handled via LibreOffice in export_pdf(), so the reportlab imports have
 # been removed to avoid import errors.
 import logging
+  
+
 import random
 import redis
 from celery import Celery
@@ -401,6 +403,9 @@ class LinkCrawler:
         self.to_visit = [start_url]
         self.should_cancel = False
         self.outbound_checked = 0
+                # Store full image source URLs already processed for alt text
+        self.alt_seen_src = set()
+
 
         # Track image basenames seen across all product pages if we need to
         # de‑duplicate images globally.  Currently unused but kept for
