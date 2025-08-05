@@ -151,7 +151,7 @@
                     zero it appears red.  We removed the pages scanned tile to
                     conserve space and added a tile for alt text issues.
                 -->
-                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 text-center">
+                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4 text-center">
                     <!-- Outbound links count; color will be set dynamically in JS -->
                     <div id="outbound-progress-card" class="rounded-lg p-4">
                         <div id="outbound-count" class="text-2xl font-bold">0</div>
@@ -176,6 +176,21 @@
                     <div id="alt-progress-card" class="rounded-lg p-4">
                         <div id="alt-count" class="text-2xl font-bold">0</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">Alt Text Issues</div>
+                    </div>
+                    <!-- Trust signal issues count -->
+                    <div id="trust-progress-card" class="rounded-lg p-4">
+                        <div id="trust-count" class="text-2xl font-bold">0</div>
+                        <div class="text-sm text-gray-600 dark:text-gray-400">Trust Signals</div>
+                    </div>
+                    <!-- Restricted content issues count -->
+                    <div id="restricted-progress-card" class="rounded-lg p-4">
+                        <div id="restricted-count" class="text-2xl font-bold">0</div>
+                        <div class="text-sm text-gray-600 dark:text-gray-400">Restricted & Blocks</div>
+                    </div>
+                    <!-- Structured data issues count -->
+                    <div id="structured-progress-card" class="rounded-lg p-4">
+                        <div id="structured-count" class="text-2xl font-bold">0</div>
+                        <div class="text-sm text-gray-600 dark:text-gray-400">Structured Data Issues</div>
                     </div>
                 </div>
                 
@@ -397,6 +412,11 @@ const cancelBtn = document.getElementById('cancel-crawl-btn');
 
 // Count of image alt text issues during the crawl
 const altCount = document.getElementById('alt-count');
+
+// New counts for trust signals, restricted content and structured data issues
+const trustCount = document.getElementById('trust-count');
+const restrictedCount = document.getElementById('restricted-count');
+const structuredCount = document.getElementById('structured-count');
 
 // Live URL display elements: these may be undefined because the live URL
 // display has been removed from the UI.  The code checks for their
@@ -1025,6 +1045,31 @@ function updateProgress(data) {
         altCount.innerHTML = `${altRatio} <i class="fas ${altIconClass} ml-1"></i>`;
     }
 
+    // Trust signals issues
+    const trustIssues = (data.trust_signal_issues && Array.isArray(data.trust_signal_issues)) ? data.trust_signal_issues.length : 0;
+    const trustDenom = data.trust_check_pages || (pagesTotal > 0 ? pagesTotal : 0);
+    const trustRatio = trustDenom > 0 ? `${trustIssues}/${trustDenom}` : `${trustIssues}`;
+    const trustIconClass = trustIssues > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+    if (typeof trustCount !== 'undefined') {
+        trustCount.innerHTML = `${trustRatio} <i class="fas ${trustIconClass} ml-1"></i>`;
+    }
+    // Restricted content issues
+    const restrictedIssues = (data.restricted_content_pages && Array.isArray(data.restricted_content_pages)) ? data.restricted_content_pages.length : 0;
+    const restrictedDenom = data.restricted_check_pages || (pagesTotal > 0 ? pagesTotal : 0);
+    const restrictedRatio = restrictedDenom > 0 ? `${restrictedIssues}/${restrictedDenom}` : `${restrictedIssues}`;
+    const restrictedIconClass = restrictedIssues > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+    if (typeof restrictedCount !== 'undefined') {
+        restrictedCount.innerHTML = `${restrictedRatio} <i class="fas ${restrictedIconClass} ml-1"></i>`;
+    }
+    // Structured data issues
+    const structuredIssues = (data.structured_data_issues && Array.isArray(data.structured_data_issues)) ? data.structured_data_issues.length : 0;
+    const structuredDenom = data.structured_check_pages || (pagesTotal > 0 ? pagesTotal : 0);
+    const structuredRatio = structuredDenom > 0 ? `${structuredIssues}/${structuredDenom}` : `${structuredIssues}`;
+    const structuredIconClass = structuredIssues > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+    if (typeof structuredCount !== 'undefined') {
+        structuredCount.innerHTML = `${structuredRatio} <i class="fas ${structuredIconClass} ml-1"></i>`;
+    }
+
     // Dynamically adjust card colors based on whether any errors have been detected.
     // When a count is zero, the card is rendered with a green background and text. If
     // the count is greater than zero, use a red background and text.  This
@@ -1046,11 +1091,18 @@ function updateProgress(data) {
     const mismatchCardProg = document.getElementById('mismatch-progress-card');
     const bannedCardProg = document.getElementById('banned-progress-card');
     const altCardProg = document.getElementById('alt-progress-card');
+    const trustCardProg = document.getElementById('trust-progress-card');
+    const restrictedCardProg = document.getElementById('restricted-progress-card');
+    const structuredCardProg = document.getElementById('structured-progress-card');
     applyProgressCardStyles(outboundCardProg, outboundCount, data.outbound_count || 0);
     applyProgressCardStyles(brokenCardProg, brokenCount, data.broken_count || 0);
     applyProgressCardStyles(mismatchCardProg, mismatchCount, mismatchLen);
     applyProgressCardStyles(bannedCardProg, bannedCount, bannedLen);
     applyProgressCardStyles(altCardProg, altCount, altLen);
+    // Apply styles for new checks using the counts computed above
+    applyProgressCardStyles(trustCardProg, trustCount, trustIssues);
+    applyProgressCardStyles(restrictedCardProg, restrictedCount, restrictedIssues);
+    applyProgressCardStyles(structuredCardProg, structuredCount, structuredIssues);
     
     // Update live URL display
     updateLiveUrlDisplay(data);
@@ -1472,6 +1524,11 @@ function resetAll() {
     // Reset alt counts
     if (typeof altCount !== 'undefined') altCount.textContent = '0';
     if (typeof finalAlt !== 'undefined') finalAlt.textContent = '-';
+
+    // Reset new counts for trust, restricted and structured data
+    if (typeof trustCount !== 'undefined') trustCount.textContent = '0';
+    if (typeof restrictedCount !== 'undefined') restrictedCount.textContent = '0';
+    if (typeof structuredCount !== 'undefined') structuredCount.textContent = '0';
 
     // Reset client-side trackers for monotonic counts and denominators. Without
     // resetting these, values from a previous crawl may persist and cause
