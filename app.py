@@ -1972,14 +1972,30 @@ def crawl_status():
     mismatch_err = len(status.get('title_mismatches', []))
     banned_err = len(status.get('banned_keyword_pages', []))
     alt_err = status.get('alt_text_count', 0)
-    # Define weights: assign a lower weight to alt text so it has less
-    # impact on the overall compliance score compared to other checks.
+    # Compute denominators and errors for new check categories.  If a
+    # category has no explicit count, fall back to the total pages scanned so
+    # that the ratio still yields meaningful values.  The restricted
+    # category combines pages flagged for prohibited content, meta robots
+    # directives and robots.txt disallows.
+    trust_total = status.get('trust_check_pages', 0) or pages_scanned
+    restricted_total = status.get('restricted_check_pages', 0) or pages_scanned
+    structured_total = status.get('structured_check_pages', 0) or pages_scanned
+    trust_err = len(status.get('trust_signal_issues', []))
+    restricted_err = (len(status.get('restricted_content_pages', [])) +
+                      len(status.get('meta_robots_pages', [])) +
+                      len(status.get('robots_disallowed', [])))
+    structured_err = len(status.get('structured_data_issues', []))
+    # Define weights: assign a lower weight to alt text and structured data so
+    # they have less impact on the overall compliance score compared to other checks.
     weights = {
         'outbound': 1.0,
         'broken': 1.0,
         'mismatch': 1.0,
         'banned': 1.0,
-        'alt': 0.5
+        'alt': 0.5,
+        'trust': 1.0,
+        'restricted': 1.0,
+        'structured': 0.5
     }
     weighted_error_sum = 0.0
     total_weight = 0.0
@@ -2003,6 +2019,18 @@ def crawl_status():
     if alt_total > 0:
         weighted_error_sum += weights['alt'] * (alt_err / alt_total)
         total_weight += weights['alt']
+    # Trust signals
+    if trust_total > 0:
+        weighted_error_sum += weights['trust'] * (trust_err / trust_total)
+        total_weight += weights['trust']
+    # Restricted content and blocking
+    if restricted_total > 0:
+        weighted_error_sum += weights['restricted'] * (restricted_err / restricted_total)
+        total_weight += weights['restricted']
+    # Structured data
+    if structured_total > 0:
+        weighted_error_sum += weights['structured'] * (structured_err / structured_total)
+        total_weight += weights['structured']
     # Compute quality: 1 minus weighted average of error rates
     if total_weight > 0:
         quality = 1.0 - (weighted_error_sum / total_weight)
@@ -2175,6 +2203,15 @@ def export_txt(result, domain_clean, timestamp):
     banned_err = len(getattr(result, 'banned_keyword_pages', []))
     # Alt text errors are zero because the alt text checker has been removed
     alt_err = 0
+    # New denominators and error counts for trust, restricted and structured checks
+    trust_total = getattr(result, 'trust_check_pages', 0) or pages_scanned
+    restricted_total = getattr(result, 'restricted_check_pages', 0) or pages_scanned
+    structured_total = getattr(result, 'structured_check_pages', 0) or pages_scanned
+    trust_err = len(getattr(result, 'trust_signal_issues', []))
+    restricted_err = (len(getattr(result, 'restricted_content_pages', [])) +
+                      len(getattr(result, 'meta_robots_pages', [])) +
+                      len(getattr(result, 'robots_disallowed', [])))
+    structured_err = len(getattr(result, 'structured_data_issues', []))
     # Weights (alt text category weight is zero because the checker has been removed)
     weights = {
         'outbound': 1.0,
@@ -2182,7 +2219,10 @@ def export_txt(result, domain_clean, timestamp):
         'mismatch': 1.0,
         'banned': 1.0,
         # Alt text checker removed; alt errors are assigned zero weight
-        'alt': 0.0
+        'alt': 0.0,
+        'trust': 1.0,
+        'restricted': 1.0,
+        'structured': 0.5
     }
     weighted_error_sum = 0.0
     total_weight = 0.0
@@ -2201,6 +2241,18 @@ def export_txt(result, domain_clean, timestamp):
     if alt_total > 0:
         weighted_error_sum += weights['alt'] * (alt_err / alt_total)
         total_weight += weights['alt']
+    # Trust signals
+    if trust_total > 0:
+        weighted_error_sum += weights['trust'] * (trust_err / trust_total)
+        total_weight += weights['trust']
+    # Restricted content and blocking
+    if restricted_total > 0:
+        weighted_error_sum += weights['restricted'] * (restricted_err / restricted_total)
+        total_weight += weights['restricted']
+    # Structured data
+    if structured_total > 0:
+        weighted_error_sum += weights['structured'] * (structured_err / structured_total)
+        total_weight += weights['structured']
     if total_weight > 0:
         quality = 1.0 - (weighted_error_sum / total_weight)
     else:
@@ -2419,13 +2471,25 @@ def export_pdf(result, domain_clean, timestamp):
     banned_err = len(getattr(result, 'banned_keyword_pages', []))
     # Alt text errors are zero because the alt text checker has been removed
     alt_err = 0
+    # Additional denominators and error counts for new checks
+    trust_total = getattr(result, 'trust_check_pages', 0) or pages_scanned
+    restricted_total = getattr(result, 'restricted_check_pages', 0) or pages_scanned
+    structured_total = getattr(result, 'structured_check_pages', 0) or pages_scanned
+    trust_err = len(getattr(result, 'trust_signal_issues', []))
+    restricted_err = (len(getattr(result, 'restricted_content_pages', [])) +
+                      len(getattr(result, 'meta_robots_pages', [])) +
+                      len(getattr(result, 'robots_disallowed', [])))
+    structured_err = len(getattr(result, 'structured_data_issues', []))
     weights = {
         'outbound': 1.0,
         'broken': 1.0,
         'mismatch': 1.0,
         'banned': 1.0,
         # Alt text checker removed; alt errors do not contribute to the weighted score
-        'alt': 0.0
+        'alt': 0.0,
+        'trust': 1.0,
+        'restricted': 1.0,
+        'structured': 0.5
     }
     weighted_error_sum = 0.0
     total_weight = 0.0
@@ -2444,6 +2508,18 @@ def export_pdf(result, domain_clean, timestamp):
     if alt_total > 0:
         weighted_error_sum += weights['alt'] * (alt_err / alt_total)
         total_weight += weights['alt']
+    # Trust signals
+    if trust_total > 0:
+        weighted_error_sum += weights['trust'] * (trust_err / trust_total)
+        total_weight += weights['trust']
+    # Restricted content and blocking
+    if restricted_total > 0:
+        weighted_error_sum += weights['restricted'] * (restricted_err / restricted_total)
+        total_weight += weights['restricted']
+    # Structured data
+    if structured_total > 0:
+        weighted_error_sum += weights['structured'] * (structured_err / structured_total)
+        total_weight += weights['structured']
     if total_weight > 0:
         quality = 1.0 - (weighted_error_sum / total_weight)
     else:
