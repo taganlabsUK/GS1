@@ -237,7 +237,17 @@
                 }
             });
         }
+    {% block scripts %}{% endblock %}
     </script>
+
+    {#
+      Allow child templates to inject additional scripts.  The `scripts`
+      block is intentionally placed after the common scripts so that
+      page-specific scripts can safely reference elements defined in the
+      layout.  If a child template does not override this block, it
+      renders nothing.
+    #}
+    {% block scripts %}{% endblock %}
 
     <!-- Subtle version indicator for internal use -->
     <div class="fixed bottom-2 left-2 text-xs text-gray-400 dark:text-gray-600 opacity-50 pointer-events-none">
@@ -246,8 +256,4 @@
     
     {% block scripts %}{% endblock %}
 </body>
-<<<<<<< HEAD
 </html>
-=======
-</html>
->>>>>>> d8065476d979709a7696f2ba909d5eeff0763395

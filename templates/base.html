@@ -39,6 +39,13 @@
             document.documentElement.classList.remove('dark');
         }
     </script>
+
+    {#
+      Scripts block placeholder.  Child templates may override this to
+      include additional JavaScript.  If not overridden, this block
+      renders nothing.
+    #}
+    {% block scripts %}{% endblock %}
     
     <!-- Custom CSS -->
     <style>
@@ -216,8 +223,4 @@
     
     {% block scripts %}{% endblock %}
 </body>
-<<<<<<< HEAD
 </html>
-=======
-</html>
->>>>>>> d8065476d979709a7696f2ba909d5eeff0763395
