@@ -192,6 +192,11 @@
                         <div id="structured-count" class="text-2xl font-bold">0</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">Structured Data Issues</div>
                     </div>
+                    <!-- Debug log container (hidden until logs are available) -->
+                </div>
+                <div id="debug-log-container" class="hidden mt-4">
+                    <h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Debug Log</h4>
+                    <pre id="debug-log" class="bg-gray-100 dark:bg-gray-800 p-2 rounded overflow-y-auto h-40 text-xs font-mono"></pre>
                 </div>
                 
                 <!-- The live URL display has been removed.  Previously this section
@@ -315,6 +320,11 @@
                     <button id="new-crawl-btn" class="bg-black hover:bg-gray-800 text-yellow-200 px-6 py-3 rounded-lg transition-colors">
                         Start A New Check
                     </button>
+                </div>
+
+                <!-- Download debug log link (shown after crawl) -->
+                <div class="text-center mt-4">
+                    <a id="download-log-link" href="#" class="text-sm text-blue-600 dark:text-blue-400 underline hidden">Download Debug Log</a>
                 </div>
             </div>
 
@@ -504,6 +514,12 @@ const restrictedList = document.getElementById('restricted-list');
 // Structured data issues elements
 const structuredSection = document.getElementById('structured-section');
 const structuredList = document.getElementById('structured-list');
+
+// Debug log elements
+const debugLog = document.getElementById('debug-log');
+const debugLogContainer = document.getElementById('debug-log-container');
+const downloadLogLink = document.getElementById('download-log-link');
+let lastLogIndex = 0;
 
 // Mismatch elements for displaying product title vs URL slug mismatches
 // When mismatches are present, the mismatch section will be shown and
@@ -1300,6 +1316,17 @@ function updateProgress(data) {
         updateStructuredSection(data.structured_data_issues);
         // Update compliance progress circle
         updateCompliance(data.compliance || 0, 'progress');
+        // Append debug logs to the log window
+        if (data.debug_logs && Array.isArray(data.debug_logs) && debugLog) {
+            for (let i = lastLogIndex; i < data.debug_logs.length; i++) {
+                try {
+                    const line = data.debug_logs[i];
+                    debugLog.textContent += line + '\n';
+                } catch (e) {}
+            }
+            lastLogIndex = data.debug_logs.length;
+            if (debugLogContainer) debugLogContainer.classList.remove('hidden');
+        }
     } catch (e) {
         console.error('Mismatch section update failed:', e);
     }
@@ -1437,6 +1464,14 @@ function showResults(data) {
     applyCardStyles(trustCard, finalTrust, trustFinal);
     applyCardStyles(restrictedCard, finalRestricted, restrictedFinal);
     applyCardStyles(structuredCard, finalStructured, structuredFinal);
+
+    // Set download log link
+    try {
+        if (typeof downloadLogLink !== 'undefined' && currentSessionId) {
+            downloadLogLink.href = `/debug_log?session_id=${currentSessionId}`;
+            downloadLogLink.classList.remove('hidden');
+        }
+    } catch (e) {}
 
     // Populate the issue lists for the new checks
     try {
@@ -1751,6 +1786,12 @@ function resetAll() {
     if (typeof trustCount !== 'undefined') trustCount.textContent = '0';
     if (typeof restrictedCount !== 'undefined') restrictedCount.textContent = '0';
     if (typeof structuredCount !== 'undefined') structuredCount.textContent = '0';
+
+    // Reset debug log
+    if (typeof debugLog !== 'undefined') debugLog.textContent = '';
+    lastLogIndex = 0;
+    if (typeof debugLogContainer !== 'undefined') debugLogContainer.classList.add('hidden');
+    if (typeof downloadLogLink !== 'undefined') downloadLogLink.classList.add('hidden');
 
     // Reset trust, restricted and structured sections
     if (typeof trustSection !== 'undefined') trustSection.classList.add('hidden');

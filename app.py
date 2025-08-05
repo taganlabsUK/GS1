@@ -1351,6 +1351,32 @@ class LinkCrawler:
                     continue
         except Exception:
             pass
+
+        # Additional checks specific to product pages.  If the URL indicates a
+        # product page, verify that key elements are present: price, a purchase
+        # button and availability information.  This helps catch cases where
+        # products are not directly purchasable or have incomplete data.
+        try:
+            parsed_url_local = urlparse(url)
+            if '/products/' in parsed_url_local.path:
+                # Check for price pattern (currency symbols followed by numbers)
+                has_price = False
+                try:
+                    # Look for common currency symbols followed by digits, e.g. $49 or £30
+                    if re.search(r'[\$£€]\s?\d+', text_lower):
+                        has_price = True
+                except Exception:
+                    pass
+                if not has_price:
+                    policy_issues.append('product page missing price')
+                # Check for purchase button keywords
+                if not any(keyword in text_lower for keyword in ['add to cart', 'add to basket', 'buy now', 'add-to-cart']):
+                    policy_issues.append('product page missing purchase button')
+                # Check for availability information (in stock / out of stock)
+                if not any(keyword in text_lower for keyword in ['in stock', 'out of stock', 'available']):
+                    policy_issues.append('product availability not specified')
+        except Exception:
+            pass
         # Record issues if any exist
         if contact_issues or policy_issues or ssl_issues:
             with self.result.lock:
