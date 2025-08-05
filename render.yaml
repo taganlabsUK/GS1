@@ -1,0 +1,95 @@
+services:
+  # Valkey/Redis instance for Celery broker and result backend
+  # Replace `plan: free` with a higher tier if you need more resources.
+  - type: keyvalue
+    name: gmcdb
+    plan: free
+    ipAllowList: []  # only allow internal connections
+    maxmemoryPolicy: allkeys-lru
+
+  # Background worker service for Celery
+  - type: worker
+    name: gmc-scout-worker
+    env: python
+    # Install dependencies before starting the worker
+    buildCommand: pip install -r requirements.txt
+    # Start Celery pointing at the `celery_app` defined in app.py
+    startCommand: celery -A app.celery_app worker --loglevel=info
+    envVars:
+      # Use the connection string from the Valkey/Redis instance above
+      - key: REDIS_URL
+        fromService:
+          name: gmcdb
+          type: keyvalue
+          property: connectionString
+      # Secret key for Flask sessions. Render will generate this on first deploy.
+      - key: SECRET_KEY
+        generateValue: true
+      # Crawl configuration
+      - key: MAX_PAGES
+        value: "5000"
+      - key: HARD_LIMIT_PAGES
+        value: "6000"
+      - key: CRAWL_TIMEOUT
+        value: "1800"
+      - key: CRAWL_DELAY
+        value: "0.3"
+      # SMTP settings for feedback emails
+      - key: SMTP_SERVER
+        value: "smtp.gmail.com"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: FEEDBACK_EMAIL
+        value: "terry@terryecom.com"
+      # Ensure production configuration for Flask
+      - key: FLASK_ENV
+        value: "production"
+
+  # Web service running the Flask application
+  - type: web
+    name: gmc-scout-v1
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    # Run the app via Gunicorn in production
+    # Increase Gunicorn worker and thread counts to better handle concurrent
+    # requests.  Two workers with eight threads each allows the service to
+    # handle more simultaneous connections and reduces the likelihood that
+    # crawl threads will block the web server.  Adjust workers/threads
+    # according to your plan's CPU/memory limits.
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 8 --timeout 600 --worker-class sync --max-requests 1000 --max-requests-jitter 100 app:app
+    envVars:
+      # Connect to the same Valkey/Redis instance as the worker
+      - key: REDIS_URL
+        fromService:
+          name: gmcdb
+          type: keyvalue
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: MAX_PAGES
+        value: "5000"
+      - key: HARD_LIMIT_PAGES
+        value: "6000"
+      - key: CRAWL_TIMEOUT
+        value: "1800"
+      - key: CRAWL_DELAY
+        value: "0.3"
+      - key: SMTP_SERVER
+        value: "smtp.gmail.com"
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: FEEDBACK_EMAIL
+        value: "terry@terryecom.com"
+      - key: FLASK_ENV
+        value: "production"
+    # Health check path should return a 200 OK when the app is healthy
+    healthCheckPath: /healthz

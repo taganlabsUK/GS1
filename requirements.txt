@@ -1,0 +1,10 @@
+Flask==3.0.0
+Flask-Limiter==3.5.0
+requests==2.31.0
+beautifulsoup4==4.12.2
+reportlab==4.0.4
+Werkzeug==3.0.1
+gunicorn==21.2.0
+lxml==5.1.0
+redis==5.0.1
+celery==5.3.4

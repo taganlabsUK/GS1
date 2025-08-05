@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="GMC Scout V1 – Google Merchant Center compliance tool. Scan your store's pages for title and slug mismatches, broken links and outbound link issues. No data stored, privacy-focused.">
+    <meta name="keywords" content="Google Merchant Center, compliance checker, product title mismatch, broken links, outbound links, GMC Scout">
+    <meta name="author" content="GMC Scout">
+    
+    <title>{% block title %}GMC Scout V1{% endblock %}</title>
+
+    <!-- Favicon: blue heart emoji -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='16' font-size='16'>💙</text></svg>">
+
+    <!-- Social share metadata -->
+    <meta property="og:title" content="GMC Scout V1">
+    <meta property="og:description" content="Ensure your website meets Google Merchant Center compliance requirements with GMC Scout V1">
+    <meta property="og:image" content="{{ url_for('static', filename='linkcheckersocial.png', _external=True) }}">
+    <meta property="og:url" content="https://gmcscout.com">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="GMC Scout V1">
+    <meta name="twitter:description" content="Ensure your website meets Google Merchant Center compliance requirements with GMC Scout V1">
+    <meta name="twitter:image" content="{{ url_for('static', filename='linkcheckersocial.png', _external=True) }}">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Tailwind CSS via Play CDN -->
+    <!--
+      We use Tailwind's Play CDN to dynamically generate styles in the browser.
+      This simplifies the build process and ensures that all classes used in
+      your templates are styled correctly without needing a local build step.
+      You can still extend the default Tailwind theme by defining a
+      `tailwind.config` object below.
+    -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Extend the default Tailwind palette with our primary colour scale
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eff6ff',
+                100: '#dbeafe',
+                200: '#bfdbfe',
+                300: '#93bbfc',
+                400: '#60a5fa',
+                500: '#3b82f6',
+                600: '#2563eb',
+                700: '#1d4ed8',
+                800: '#1e40af',
+                900: '#1e3a8a',
+              }
+            }
+          }
+        }
+      };
+    </script>
+
+    <!-- Dark mode initialization (run immediately).  We no longer rely on Tailwind's JS
+         compiler, so we set dark mode by toggling the 'dark' class based on user
+         preference or stored value. -->
+    <script>
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
+    
+    <!-- Custom CSS -->
+    <style>
+        :root {
+            --primary-50: #eff6ff;
+            --primary-100: #dbeafe;
+            --primary-200: #bfdbfe;
+            --primary-300: #93bbfc;
+            --primary-400: #60a5fa;
+            --primary-500: #3b82f6;
+            --primary-600: #2563eb;
+            --primary-700: #1d4ed8;
+            --primary-800: #1e40af;
+            --primary-900: #1e3a8a;
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, var(--primary-600) 0%, var(--primary-800) 100%);
+        }
+        
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                color-scheme: dark;
+            }
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        
+        .dark ::-webkit-scrollbar-track {
+            background: #374151;
+        }
+        
+        .dark ::-webkit-scrollbar-thumb {
+            background: #6b7280;
+        }
+        
+        .dark ::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+    <!-- Header removed by user request -->
+    
+    <!-- Main Content -->
+    <main class="min-h-screen">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <!-- Footer removed per user request -->
+    
+    <!-- Theme Toggle and Feedback Scripts -->
+    <script>
+        // Dark/light mode toggle: only attach handler if the button exists
+        const themeToggle = document.getElementById('theme-toggle');
+        if (themeToggle) {
+            themeToggle.addEventListener('click', () => {
+                if (document.documentElement.classList.contains('dark')) {
+                    document.documentElement.classList.remove('dark');
+                    localStorage.theme = 'light';
+                } else {
+                    document.documentElement.classList.add('dark');
+                    localStorage.theme = 'dark';
+                }
+            });
+        }
+
+        /*
+         * Note: The feedback modal and associated controls have been removed
+         * from the page. The following variables and event handlers are
+         * conditionally attached only if the corresponding elements exist.
+         * This avoids runtime errors when elements are missing.
+         */
+        const feedbackBtn = document.getElementById('feedback-btn');
+        const feedbackModal = document.getElementById('feedback-modal');
+        const closeFeedback = document.getElementById('close-feedback');
+        const feedbackForm = document.getElementById('feedback-form');
+        const clearFeedback = document.getElementById('clear-feedback');
+        const feedbackSuccess = document.getElementById('feedback-success');
+        const feedbackError = document.getElementById('feedback-error');
+        const feedbackErrorText = document.getElementById('feedback-error-text');
+
+        if (feedbackBtn && feedbackModal && closeFeedback && feedbackForm && clearFeedback && feedbackSuccess && feedbackError && feedbackErrorText) {
+            feedbackBtn.addEventListener('click', () => {
+                feedbackModal.classList.remove('hidden');
+                feedbackSuccess.classList.add('hidden');
+                feedbackError.classList.add('hidden');
+            });
+
+            closeFeedback.addEventListener('click', () => {
+                feedbackModal.classList.add('hidden');
+            });
+
+            feedbackModal.addEventListener('click', (e) => {
+                if (e.target === feedbackModal) {
+                    feedbackModal.classList.add('hidden');
+                }
+            });
+
+            clearFeedback.addEventListener('click', () => {
+                feedbackForm.reset();
+                feedbackSuccess.classList.add('hidden');
+                feedbackError.classList.add('hidden');
+            });
+
+            feedbackForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const email = document.getElementById('feedback-email').value.trim();
+                const message = document.getElementById('feedback-message').value.trim();
+                if (!message) {
+                    feedbackErrorText.textContent = 'Please enter a message';
+                    feedbackError.classList.remove('hidden');
+                    return;
+                }
+                if (message.length > 1000) {
+                    feedbackErrorText.textContent = 'Message too long (max 1000 characters)';
+                    feedbackError.classList.remove('hidden');
+                    return;
+                }
+                try {
+                    const response = await fetch('/feedback', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            email: email,
+                            message: message
+                        })
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        feedbackSuccess.classList.remove('hidden');
+                        feedbackError.classList.add('hidden');
+                        feedbackForm.reset();
+                        setTimeout(() => {
+                            feedbackModal.classList.add('hidden');
+                        }, 3000);
+                    } else {
+                        feedbackErrorText.textContent = data.error || 'Failed to submit feedback';
+                        feedbackError.classList.remove('hidden');
+                        feedbackSuccess.classList.add('hidden');
+                    }
+                } catch (error) {
+                    feedbackErrorText.textContent = 'Network error. Please try again.';
+                    feedbackError.classList.remove('hidden');
+                    feedbackSuccess.classList.add('hidden');
+                }
+            });
+        }
+    </script>
+
+    <!-- Subtle version indicator for internal use -->
+    <div class="fixed bottom-2 left-2 text-xs text-gray-400 dark:text-gray-600 opacity-50 pointer-events-none">
+        TELC-v0.001(31/07/25)
+    </div>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html>
