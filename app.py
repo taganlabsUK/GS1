@@ -1286,6 +1286,28 @@ class LinkCrawler:
                 ssl_issues.append('page not served over HTTPS')
         except Exception:
             pass
+        # Additional Merchant Center compliance heuristics
+        try:
+            # Lowercase text for searching
+            text_lower = text.lower()
+            # Flag unrealistic or prohibited promotional claims.  Do not flag
+            # common marketing phrases such as "free shipping" or "free returns",
+            # which are allowed.  Terms like "best price", "lowest price",
+            # "100%" or "guaranteed" are considered unrealistic under
+            # misrepresentation guidelines.
+            banned_claims = [
+                'best price', 'lowest price', 'guaranteed', '100%', '100 percent',
+                'no risk', 'money back guarantee'
+            ]
+            for claim in banned_claims:
+                try:
+                    if claim in text_lower:
+                        policy_issues.append(f'unrealistic claim: {claim}')
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
         # Record issues if any exist
         if contact_issues or policy_issues or ssl_issues:
             with self.result.lock:

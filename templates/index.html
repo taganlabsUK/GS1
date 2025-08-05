@@ -265,7 +265,7 @@
                         </div>
                     </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4 mb-6">
                     <!-- Note: The pages analyzed card has been removed.  We will display
                          the total number of pages scanned directly in the results header.
                          The following four cards show counts for outbound links,
@@ -293,6 +293,21 @@
                         <div id="final-alt" class="text-2xl font-bold">-</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">Alt Text Issues</div>
                     </div>
+                <!-- Trust signals summary -->
+                <div id="trust-card" class="rounded-lg p-4">
+                    <div id="final-trust" class="text-2xl font-bold">-</div>
+                    <div class="text-sm text-gray-600 dark:text-gray-400">Trust Signals</div>
+                </div>
+                <!-- Restricted & blocks summary -->
+                <div id="restricted-card" class="rounded-lg p-4">
+                    <div id="final-restricted" class="text-2xl font-bold">-</div>
+                    <div class="text-sm text-gray-600 dark:text-gray-400">Restricted &amp; Blocks</div>
+                </div>
+                <!-- Structured data summary -->
+                <div id="structured-card" class="rounded-lg p-4">
+                    <div id="final-structured" class="text-2xl font-bold">-</div>
+                    <div class="text-sm text-gray-600 dark:text-gray-400">Structured Data Issues</div>
+                </div>
                     <!-- Duration card removed.  The duration will be displayed in the results header instead. -->
                 </div>
 
@@ -470,6 +485,11 @@ const brokenList = document.getElementById('broken-list');
 
 // Final count of image alt text issues
 const finalAlt = document.getElementById('final-alt');
+
+// Final counts for new checks
+const finalTrust = document.getElementById('final-trust');
+const finalRestricted = document.getElementById('final-restricted');
+const finalStructured = document.getElementById('final-structured');
 
 // List container for alt text issues and section reference
 const altList = document.getElementById('alt-list');
@@ -1361,6 +1381,31 @@ function showResults(data) {
         const finalAltIcon = altFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
         finalAlt.innerHTML = `${finalAltRatio} <i class="fas ${finalAltIcon} ml-1"></i>`;
     }
+
+    // Compute final counts for trust signals, restricted content and structured data
+    const trustFinal = (data.trust_signal_issues && Array.isArray(data.trust_signal_issues)) ? data.trust_signal_issues.length : 0;
+    const restrictedFinal = (data.restricted_content_pages && Array.isArray(data.restricted_content_pages) ? data.restricted_content_pages.length : 0) +
+                            (data.meta_robots_pages && Array.isArray(data.meta_robots_pages) ? data.meta_robots_pages.length : 0) +
+                            (data.robots_disallowed && Array.isArray(data.robots_disallowed) ? data.robots_disallowed.length : 0);
+    const structuredFinal = (data.structured_data_issues && Array.isArray(data.structured_data_issues)) ? data.structured_data_issues.length : 0;
+    const trustTotalFinal = (data.trust_check_pages && data.trust_check_pages > 0) ? data.trust_check_pages : (pagesScanned > 0 ? pagesScanned : 0);
+    const restrictedTotalFinal = (data.restricted_check_pages && data.restricted_check_pages > 0) ? data.restricted_check_pages : (pagesScanned > 0 ? pagesScanned : 0);
+    const structuredTotalFinal = (data.structured_check_pages && data.structured_check_pages > 0) ? data.structured_check_pages : (pagesScanned > 0 ? pagesScanned : 0);
+    if (typeof finalTrust !== 'undefined') {
+        const ratio = trustTotalFinal > 0 ? `${trustFinal}/${trustTotalFinal}` : `${trustFinal}`;
+        const icon = trustFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+        finalTrust.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
+    }
+    if (typeof finalRestricted !== 'undefined') {
+        const ratio = restrictedTotalFinal > 0 ? `${restrictedFinal}/${restrictedTotalFinal}` : `${restrictedFinal}`;
+        const icon = restrictedFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+        finalRestricted.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
+    }
+    if (typeof finalStructured !== 'undefined') {
+        const ratio = structuredTotalFinal > 0 ? `${structuredFinal}/${structuredTotalFinal}` : `${structuredFinal}`;
+        const icon = structuredFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+        finalStructured.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
+    }
     // Define a helper to apply consistent styling to summary cards based on count
     function applyCardStyles(cardEl, numberEl, count) {
         const baseCardClasses = 'rounded-lg p-4';
@@ -1381,11 +1426,26 @@ function showResults(data) {
     const mismatchCard = document.getElementById('mismatch-card');
     const bannedCard = document.getElementById('banned-card');
     const altCard = document.getElementById('alt-card');
+    const trustCard = document.getElementById('trust-card');
+    const restrictedCard = document.getElementById('restricted-card');
+    const structuredCard = document.getElementById('structured-card');
     applyCardStyles(outboundCard, finalOutbound, outboundLen);
     applyCardStyles(brokenCard, finalBroken, brokenLen);
     applyCardStyles(mismatchCard, finalMismatch, mismatchesFinal);
     applyCardStyles(bannedCard, finalBanned, bannedFinal);
     applyCardStyles(altCard, finalAlt, altFinal);
+    applyCardStyles(trustCard, finalTrust, trustFinal);
+    applyCardStyles(restrictedCard, finalRestricted, restrictedFinal);
+    applyCardStyles(structuredCard, finalStructured, structuredFinal);
+
+    // Populate the issue lists for the new checks
+    try {
+        updateTrustSection(data.trust_signal_issues);
+        updateRestrictedSection(data.restricted_content_pages, data.meta_robots_pages, data.robots_disallowed);
+        updateStructuredSection(data.structured_data_issues);
+    } catch (e) {
+        console.error('Error updating new sections in results:', e);
+    }
     
     // Determine the crawl duration if available.  We will include this in the
     // results header instead of a separate card.
