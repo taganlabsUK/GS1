@@ -810,11 +810,114 @@ class LinkCrawler:
             except Exception as e:
                 logger.debug(f"Error scanning banned keywords for {url}: {e}")
 
-            # Alt text validation has been moved to a separate pass using the
-            # Shopify products JSON feed (check_alt_text_shopify).  The per‑page
-            # crawler no longer performs alt checks during HTML crawling to
-            # avoid slowing down the crawl and reduce network overhead.
-
+             # -----------------------------------------------------------------
+            # Alt text validation
+            #
+            # Historically the crawler delegated all alt text checks to a
+            # secondary pass against Shopify’s product JSON feed.  However
+            # some storefronts block access to `/products.json` or product
+            # sitemaps altogether (returning HTTP 403), which means no
+            # images are ever counted and the denominator falls back to the
+            # number of pages scanned.  To provide a more reliable and
+            # immediate measure of accessibility, we perform a lightweight
+            # alt text scan directly on each product page.  This scan
+            # inspects every `<img>` tag, deduplicates images across the
+            # entire crawl, counts the total number of unique images seen
+            # and flags missing, generic or irrelevant alt attributes.
+            try:
+                # Determine if the current page is a product page under the
+                # crawled domain.  We reuse parsed_url if available; fall back
+                # to parsing the URL directly.
+                parsed_url_alt = None
+                try:
+                    parsed_url_alt = parsed_url
+                except Exception:
+                    parsed_url_alt = urlparse(url)
+                if parsed_url_alt and "/products/" in parsed_url_alt.path:
+                    page_netloc_alt = self.normalize_domain(parsed_url_alt.netloc)
+                    if (page_netloc_alt == self.domain or
+                            page_netloc_alt.endswith('.' + self.domain)):
+                        # Attempt to extract a representative product title.  This
+                        # value is used to compute similarity with the image
+                        # alt attribute.  We try multiple meta tags and
+                        # fall back to <h1> or <title> elements.
+                        product_title_for_alt = None
+                        tag = soup.find('meta', attrs={'property': 'og:title'})
+                        if tag and tag.get('content'):
+                            product_title_for_alt = tag['content']
+                        if not product_title_for_alt:
+                            tag = soup.find('meta', attrs={'name': 'twitter:title'})
+                            if tag and tag.get('content'):
+                                product_title_for_alt = tag['content']
+                        if not product_title_for_alt:
+                            h1_tag_for_alt = soup.find('h1')
+                            if h1_tag_for_alt:
+                                product_title_for_alt = h1_tag_for_alt.get_text(strip=True)
+                        if not product_title_for_alt:
+                            title_tag_for_alt = soup.find('title')
+                            if title_tag_for_alt:
+                                product_title_for_alt = title_tag_for_alt.get_text(strip=True)
+                        title_norm = (product_title_for_alt.lower().replace('-', ' ').strip()
+                                      if product_title_for_alt else '')
+                        # Iterate over all image tags on the page.  For each
+                        # unique image (deduplicated across the crawl), count
+                        # it and evaluate its alt attribute.
+                        for img_tag in soup.find_all('img'):
+                            try:
+                                src_attr = img_tag.get('src') or ''
+                                if not src_attr:
+                                    continue
+                                # Resolve relative URLs to absolute.  Use
+                                # urljoin to build a full image URL based on
+                                # the current page.  Remove fragments from
+                                # the URL to ensure consistent deduplication.
+                                full_src = urljoin(url, src_attr)
+                                full_src = urldefrag(full_src)[0]
+                                # Only process each unique image once across
+                                # the entire crawl.  This avoids inflating
+                                # denominators when the same image appears
+                                # on multiple product pages.
+                                if full_src in self.alt_seen_src:
+                                    continue
+                                self.alt_seen_src.add(full_src)
+                                # Increment total images scanned for alt text.
+                                with self.result.lock:
+                                    self.result.alt_checks_total += 1
+                                # Retrieve alt attribute if present.
+                                alt_attr = img_tag.get('alt')
+                                if not alt_attr or not alt_attr.strip():
+                                    # Missing alt attribute
+                                    with self.result.lock:
+                                        self.result.alt_text_issues.append((url, full_src, '(missing)', 'missing', None))
+                                        self.result.alt_text_count = len(self.result.alt_text_issues)
+                                    continue
+                                alt_clean = alt_attr.strip()
+                                # Generic alt if fewer than two words
+                                if len(alt_clean.split()) < 2:
+                                    with self.result.lock:
+                                        self.result.alt_text_issues.append((url, full_src, alt_clean, 'generic', None))
+                                        self.result.alt_text_count = len(self.result.alt_text_issues)
+                                    continue
+                                # Similarity check with the product title
+                                if title_norm:
+                                    try:
+                                        sim_val = difflib.SequenceMatcher(None, alt_clean.lower(), title_norm).ratio()
+                                    except Exception:
+                                        sim_val = 0.0
+                                    if sim_val < 0.4:
+                                        with self.result.lock:
+                                            self.result.alt_text_issues.append((url, full_src, alt_clean, 'low similarity', sim_val))
+                                            self.result.alt_text_count = len(self.result.alt_text_issues)
+                            
+                        # Persist updated alt text counts so the UI can
+                        # reflect progress in near real time.  Errors during
+                        # persistence are logged at debug level but do not
+                        # interrupt crawling.
+                        try:
+                            self.result.save_to_redis()
+                        except Exception as e:
+                            logger.debug(f"Failed to persist alt text progress: {e}")
+   
             # Extract all links
             links_found = 0
             for a_tag in soup.find_all("a", href=True):
