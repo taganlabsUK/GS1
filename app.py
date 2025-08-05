@@ -21,8 +21,6 @@ import io
 # handled via LibreOffice in export_pdf(), so the reportlab imports have
 # been removed to avoid import errors.
 import logging
-  
-
 import random
 import redis
 from celery import Celery
@@ -403,9 +401,11 @@ class LinkCrawler:
         self.to_visit = [start_url]
         self.should_cancel = False
         self.outbound_checked = 0
-                # Store full image source URLs already processed for alt text
-        self.alt_seen_src = set()
 
+        # Store full image source URLs already processed for alt text. This set helps
+        # de-duplicate alt text checks across the entire crawl so the same image
+        # encountered on multiple pages is only counted once.
+        self.alt_seen_src = set()
 
         # Track image basenames seen across all product pages if we need to
         # de‑duplicate images globally.  Currently unused but kept for
@@ -815,7 +815,7 @@ class LinkCrawler:
             except Exception as e:
                 logger.debug(f"Error scanning banned keywords for {url}: {e}")
 
-             # -----------------------------------------------------------------
+            # -----------------------------------------------------------------
             # Alt text validation
             #
             # Historically the crawler delegated all alt text checks to a
@@ -913,7 +913,9 @@ class LinkCrawler:
                                         with self.result.lock:
                                             self.result.alt_text_issues.append((url, full_src, alt_clean, 'low similarity', sim_val))
                                             self.result.alt_text_count = len(self.result.alt_text_issues)
-                            
+                            except Exception:
+                                # Continue scanning other images even if one fails
+                                continue
                         # Persist updated alt text counts so the UI can
                         # reflect progress in near real time.  Errors during
                         # persistence are logged at debug level but do not
@@ -922,7 +924,9 @@ class LinkCrawler:
                             self.result.save_to_redis()
                         except Exception as e:
                             logger.debug(f"Failed to persist alt text progress: {e}")
-   
+            except Exception as e:
+                logger.debug(f"Error performing alt text scan for {url}: {e}")
+
             # Extract all links
             links_found = 0
             for a_tag in soup.find_all("a", href=True):
