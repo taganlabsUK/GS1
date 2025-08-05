@@ -188,4 +188,8 @@ ehthumbs.db
 
 # Local test files
 test_output/
+<<<<<<< HEAD
 crawl_results_*
+=======
+crawl_results_*
+>>>>>>> d8065476d979709a7696f2ba909d5eeff0763395
