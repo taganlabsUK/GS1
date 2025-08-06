@@ -268,6 +268,12 @@ class CrawlResult:
         # Note: alt_check_pages and alt_checks_total are intentionally
         # omitted since the alt text checker has been removed.
 
+        # Debug logging: store human‑readable log entries describing
+        # each check performed during the crawl.  Entries are appended
+        # chronologically and may be displayed live in the UI or
+        # downloaded at the end of the crawl.
+        self.debug_logs: List[str] = []
+
         # ---------------------------------------------------------------------
         # Trust signals and policy checks
         #
@@ -364,6 +370,7 @@ class CrawlResult:
                 # Structured data validation
                 , 'structured_data_issues': list(self.structured_data_issues)
                 , 'structured_check_pages': self.structured_check_pages
+                , 'debug_logs': list(self.debug_logs)
             }
     
     def to_dict(self):
@@ -407,6 +414,7 @@ class CrawlResult:
             # Structured data validation
             , 'structured_data_issues': list(self.structured_data_issues)
             , 'structured_check_pages': self.structured_check_pages
+            , 'debug_logs': list(self.debug_logs)
             }
 
     def save_to_redis(self):
@@ -464,6 +472,7 @@ class CrawlResult:
         # Restore structured data validation
         result.structured_data_issues = data.get('structured_data_issues', [])
         result.structured_check_pages = data.get('structured_check_pages', 0)
+        result.debug_logs = data.get('debug_logs', [])
         return result
 
 class LinkCrawler:
@@ -1377,6 +1386,23 @@ class LinkCrawler:
                     policy_issues.append('product availability not specified')
         except Exception:
             pass
+        # Summarise results and add to debug log
+        try:
+            summary_parts = []
+            if contact_issues:
+                summary_parts.append('contact issues: ' + ', '.join(contact_issues))
+            if policy_issues:
+                summary_parts.append('policy issues: ' + ', '.join(policy_issues))
+            if ssl_issues:
+                summary_parts.append('ssl issues: ' + ', '.join(ssl_issues))
+            if not summary_parts:
+                summary = f"{url} - Trust check: PASS"
+            else:
+                summary = f"{url} - Trust check: FAIL - " + '; '.join(summary_parts)
+            with self.result.lock:
+                self.result.debug_logs.append(summary)
+        except Exception:
+            pass
         # Record issues if any exist
         if contact_issues or policy_issues or ssl_issues:
             with self.result.lock:
@@ -1444,6 +1470,22 @@ class LinkCrawler:
         if categories_found:
             with self.result.lock:
                 self.result.restricted_content_pages.append((url, categories_found))
+        # Add to debug log summarising restricted content check
+        try:
+            summary_parts = []
+            if categories_found:
+                summary_parts.append('restricted categories: ' + ', '.join(categories_found))
+            if meta_issues:
+                summary_parts.append('meta robots: ' + ', '.join(meta_issues))
+            # robots.txt disallows recorded separately; they are global and logged elsewhere
+            if not summary_parts:
+                summary = f"{url} - Restricted check: PASS"
+            else:
+                summary = f"{url} - Restricted check: FAIL - " + '; '.join(summary_parts)
+            with self.result.lock:
+                self.result.debug_logs.append(summary)
+        except Exception:
+            pass
 
     def _check_structured_data(self, url: str, soup: BeautifulSoup) -> None:
         """
@@ -1546,6 +1588,16 @@ class LinkCrawler:
         if errors:
             with self.result.lock:
                 self.result.structured_data_issues.append((url, errors))
+        # Log structured data results
+        try:
+            if errors:
+                summary = f"{url} - Structured data: FAIL - " + '; '.join(errors)
+            else:
+                summary = f"{url} - Structured data: PASS"
+            with self.result.lock:
+                self.result.debug_logs.append(summary)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------------
     # Policy page analysis helpers
@@ -1816,6 +1868,35 @@ def send_feedback_email(email, message, ip, user_agent):
 def index():
     """Home page with crawl form"""
     return render_template('index.html')
+
+# -----------------------------------------------------------------------------
+# Debug log download endpoint
+#
+# Returns the accumulated debug log for a given session ID as a plain text file.
+# Call with /debug_log?session_id=<id>.  If the session does not exist or has
+# no logs, returns an error.
+@app.route('/debug_log')
+def download_debug_log():
+    session_id = request.args.get('session_id')
+    if not session_id:
+        return jsonify({'error': 'session_id required'}), 400
+    # Get the CrawlResult from in‑memory storage.  When using Celery,
+    # crawl_sessions may not have the session; we could also attempt to
+    # retrieve it from Redis or return an error.
+    result = crawl_sessions.get(session_id)
+    if not result:
+        return jsonify({'error': 'session not found'}), 404
+    # Join logs with newline.  If no logs, return a message.
+    log_lines = result.debug_logs or ['No debug logs recorded.']
+    log_text = '\n'.join(log_lines)
+    file_bytes = io.BytesIO(log_text.encode('utf-8'))
+    filename = f"debug_log_{result.domain}_{session_id}.txt"
+    return send_file(
+        file_bytes,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='text/plain'
+    )
 
 # -----------------------------------------------------------------------------
 # CAPTCHA endpoint
@@ -2249,6 +2330,7 @@ def crawl_status():
                 , 'restricted_check_pages': status.get('restricted_check_pages', 0)
                 , 'structured_data_issues': status.get('structured_data_issues', [])
                 , 'structured_check_pages': status.get('structured_check_pages', 0)
+                , 'debug_logs': status.get('debug_logs', [])
     }
     
     if status['is_complete']:
