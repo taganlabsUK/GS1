@@ -151,7 +151,7 @@
                     zero it appears red.  We removed the pages scanned tile to
                     conserve space and added a tile for alt text issues.
                 -->
-                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4 text-center">
+                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
                     <!-- Outbound links count; color will be set dynamically in JS -->
                     <div id="outbound-progress-card" class="rounded-lg p-4">
                         <div id="outbound-count" class="text-2xl font-bold">0</div>
@@ -177,20 +177,10 @@
                         <div id="alt-count" class="text-2xl font-bold">0</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">Alt Text Issues</div>
                     </div>
-                    <!-- Trust signal issues count -->
-                    <div id="trust-progress-card" class="rounded-lg p-4">
-                        <div id="trust-count" class="text-2xl font-bold">0</div>
-                        <div class="text-sm text-gray-600 dark:text-gray-400">Trust Signals</div>
-                    </div>
-                    <!-- Restricted content issues count -->
-                    <div id="restricted-progress-card" class="rounded-lg p-4">
-                        <div id="restricted-count" class="text-2xl font-bold">0</div>
-                        <div class="text-sm text-gray-600 dark:text-gray-400">Restricted & Blocks</div>
-                    </div>
-                    <!-- Structured data issues count -->
-                    <div id="structured-progress-card" class="rounded-lg p-4">
-                        <div id="structured-count" class="text-2xl font-bold">0</div>
-                        <div class="text-sm text-gray-600 dark:text-gray-400">Structured Data Issues</div>
+                    <!-- AI check issues count -->
+                    <div id="ai-progress-card" class="rounded-lg p-4">
+                        <div id="ai-count" class="text-2xl font-bold">0</div>
+                        <div class="text-sm text-gray-600 dark:text-gray-400">AI Check Issues</div>
                     </div>
                     <!-- Debug log container (hidden until logs are available) -->
                 </div>
@@ -270,7 +260,7 @@
                         </div>
                     </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
                     <!-- Note: The pages analyzed card has been removed.  We will display
                          the total number of pages scanned directly in the results header.
                          The following four cards show counts for outbound links,
@@ -298,20 +288,10 @@
                         <div id="final-alt" class="text-2xl font-bold">-</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">Alt Text Issues</div>
                     </div>
-                <!-- Trust signals summary -->
-                <div id="trust-card" class="rounded-lg p-4">
-                    <div id="final-trust" class="text-2xl font-bold">-</div>
-                    <div class="text-sm text-gray-600 dark:text-gray-400">Trust Signals</div>
-                </div>
-                <!-- Restricted & blocks summary -->
-                <div id="restricted-card" class="rounded-lg p-4">
-                    <div id="final-restricted" class="text-2xl font-bold">-</div>
-                    <div class="text-sm text-gray-600 dark:text-gray-400">Restricted &amp; Blocks</div>
-                </div>
-                <!-- Structured data summary -->
-                <div id="structured-card" class="rounded-lg p-4">
-                    <div id="final-structured" class="text-2xl font-bold">-</div>
-                    <div class="text-sm text-gray-600 dark:text-gray-400">Structured Data Issues</div>
+                <!-- AI check summary -->
+                <div id="ai-card" class="rounded-lg p-4">
+                    <div id="final-ai" class="text-2xl font-bold">-</div>
+                    <div class="text-sm text-gray-600 dark:text-gray-400">AI Check Issues</div>
                 </div>
                     <!-- Duration card removed.  The duration will be displayed in the results header instead. -->
                 </div>
@@ -383,35 +363,13 @@
                 </div>
             </div>
 
-            <!-- Trust signals & policies issues -->
-            <div id="trust-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
+            <!-- AI check issues -->
+            <div id="ai-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
                 <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
-                    <i class="fas fa-shield-alt w-5 h-5 text-yellow-500"></i>
-                    <span>Trust Signals &amp; Policies</span>
+                    <i class="fas fa-robot w-5 h-5 text-blue-500"></i>
+                    <span>AI Check Issues</span>
                 </h4>
-                <div id="trust-list" class="space-y-1 max-h-48 overflow-y-auto">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </div>
-
-            <!-- Restricted content & blocks issues -->
-            <div id="restricted-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
-                <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
-                    <i class="fas fa-exclamation-triangle w-5 h-5 text-orange-500"></i>
-                    <span>Restricted Content &amp; Blocks</span>
-                </h4>
-                <div id="restricted-list" class="space-y-1 max-h-48 overflow-y-auto">
-                    <!-- Populated by JavaScript -->
-                </div>
-            </div>
-
-            <!-- Structured data issues -->
-            <div id="structured-section" class="bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 hidden">
-                <h4 class="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
-                    <i class="fas fa-code w-5 h-5 text-indigo-500"></i>
-                    <span>Structured Data Issues</span>
-                </h4>
-                <div id="structured-list" class="space-y-1 max-h-48 overflow-y-auto">
+                <div id="ai-list" class="space-y-1 max-h-48 overflow-y-auto">
                     <!-- Populated by JavaScript -->
                 </div>
             </div>
@@ -471,10 +429,8 @@ const cancelBtn = document.getElementById('cancel-crawl-btn');
 // Count of image alt text issues during the crawl
 const altCount = document.getElementById('alt-count');
 
-// New counts for trust signals, restricted content and structured data issues
-const trustCount = document.getElementById('trust-count');
-const restrictedCount = document.getElementById('restricted-count');
-const structuredCount = document.getElementById('structured-count');
+// AI check aggregated issues count
+const aiCount = document.getElementById('ai-count');
 
 // Live URL display elements: these may be undefined because the live URL
 // display has been removed from the UI.  The code checks for their
@@ -496,24 +452,16 @@ const brokenList = document.getElementById('broken-list');
 // Final count of image alt text issues
 const finalAlt = document.getElementById('final-alt');
 
-// Final counts for new checks
-const finalTrust = document.getElementById('final-trust');
-const finalRestricted = document.getElementById('final-restricted');
-const finalStructured = document.getElementById('final-structured');
+// Final count for AI check
+const finalAi = document.getElementById('final-ai');
 
 // List container for alt text issues and section reference
 const altList = document.getElementById('alt-list');
 const altSection = document.getElementById('alt-section');
 
-// Trust signals & policies elements
-const trustSection = document.getElementById('trust-section');
-const trustList = document.getElementById('trust-list');
-// Restricted content & blocks elements
-const restrictedSection = document.getElementById('restricted-section');
-const restrictedList = document.getElementById('restricted-list');
-// Structured data issues elements
-const structuredSection = document.getElementById('structured-section');
-const structuredList = document.getElementById('structured-list');
+// AI check elements
+const aiSection = document.getElementById('ai-section');
+const aiList = document.getElementById('ai-list');
 
 // Debug log elements
 const debugLog = document.getElementById('debug-log');
@@ -788,6 +736,47 @@ function updateStructuredSection(issues) {
             row.innerHTML = `<a href="${pageUrl}" class="text-primary-600 dark:text-primary-300 underline break-all" target="_blank">${pageUrl}</a><span class="text-sm text-gray-500 dark:text-gray-400"> – ${errs.join('; ')}</span>`;
             structuredList.appendChild(row);
         } catch (e) {}
+    });
+}
+
+// Update AI check issues section by aggregating trust, restricted and structured issues
+function updateAiSection(data) {
+    // Clear existing entries
+    if (typeof aiList !== 'undefined') {
+        aiList.innerHTML = '';
+    }
+    const aiIssues = (data.ai_issues && Array.isArray(data.ai_issues)) ? data.ai_issues : [];
+    if (!aiIssues || aiIssues.length === 0) {
+        if (typeof aiSection !== 'undefined') {
+            aiSection.classList.add('hidden');
+        }
+        return;
+    }
+    // Show section
+    if (typeof aiSection !== 'undefined') {
+        aiSection.classList.remove('hidden');
+    }
+    // Display up to last 50 issues, constructing a readable message
+    aiIssues.slice(-50).forEach(issue => {
+        try {
+            const [pageUrl, category, severity, message] = issue;
+            const row = document.createElement('div');
+            row.className = 'p-2 border-b';
+            const label = `${category} (${severity})`;
+            const msg = message || '';
+            if (pageUrl && pageUrl !== '') {
+                row.innerHTML = `<a href="${pageUrl}" class="text-primary-600 dark:text-primary-300 underline break-all" target="_blank">${pageUrl}</a><span class="text-sm text-gray-500 dark:text-gray-400"> – ${label}: ${msg}</span>`;
+            } else {
+                row.innerHTML = `<span class="text-sm text-gray-500 dark:text-gray-400">${label}: ${msg}</span>`;
+            }
+            aiList.appendChild(row);
+        } catch (e) {
+            // fallback: generic string representation
+            const row = document.createElement('div');
+            row.className = 'p-2 border-b';
+            row.textContent = JSON.stringify(issue);
+            aiList.appendChild(row);
+        }
     });
 }
 
@@ -1239,29 +1228,18 @@ function updateProgress(data) {
         altCount.innerHTML = `${altRatio} <i class="fas ${altIconClass} ml-1"></i>`;
     }
 
-    // Trust signals issues
-    const trustIssues = (data.trust_signal_issues && Array.isArray(data.trust_signal_issues)) ? data.trust_signal_issues.length : 0;
-    const trustDenom = data.trust_check_pages || (pagesTotal > 0 ? pagesTotal : 0);
-    const trustRatio = trustDenom > 0 ? `${trustIssues}/${trustDenom}` : `${trustIssues}`;
-    const trustIconClass = trustIssues > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
-    if (typeof trustCount !== 'undefined') {
-        trustCount.innerHTML = `${trustRatio} <i class="fas ${trustIconClass} ml-1"></i>`;
+    // AI check issues: use unified ai_issues and ai_check_pages
+    const aiIssuesCount = (data.ai_issues && Array.isArray(data.ai_issues)) ? data.ai_issues.length : 0;
+    let aiDenom;
+    if (data.ai_check_pages && data.ai_check_pages > 0) {
+        aiDenom = data.ai_check_pages;
+    } else {
+        aiDenom = pagesTotal > 0 ? pagesTotal : 0;
     }
-    // Restricted content issues
-    const restrictedIssues = (data.restricted_content_pages && Array.isArray(data.restricted_content_pages)) ? data.restricted_content_pages.length : 0;
-    const restrictedDenom = data.restricted_check_pages || (pagesTotal > 0 ? pagesTotal : 0);
-    const restrictedRatio = restrictedDenom > 0 ? `${restrictedIssues}/${restrictedDenom}` : `${restrictedIssues}`;
-    const restrictedIconClass = restrictedIssues > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
-    if (typeof restrictedCount !== 'undefined') {
-        restrictedCount.innerHTML = `${restrictedRatio} <i class="fas ${restrictedIconClass} ml-1"></i>`;
-    }
-    // Structured data issues
-    const structuredIssues = (data.structured_data_issues && Array.isArray(data.structured_data_issues)) ? data.structured_data_issues.length : 0;
-    const structuredDenom = data.structured_check_pages || (pagesTotal > 0 ? pagesTotal : 0);
-    const structuredRatio = structuredDenom > 0 ? `${structuredIssues}/${structuredDenom}` : `${structuredIssues}`;
-    const structuredIconClass = structuredIssues > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
-    if (typeof structuredCount !== 'undefined') {
-        structuredCount.innerHTML = `${structuredRatio} <i class="fas ${structuredIconClass} ml-1"></i>`;
+    const aiRatio = aiDenom > 0 ? (aiIssuesCount + '/' + aiDenom) : aiIssuesCount.toString();
+    const aiIconClass = aiIssuesCount > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+    if (typeof aiCount !== 'undefined') {
+        aiCount.innerHTML = aiRatio + ' <i class="fas ' + aiIconClass + ' ml-1"></i>';
     }
 
     // Dynamically adjust card colors based on whether any errors have been detected.
@@ -1285,18 +1263,14 @@ function updateProgress(data) {
     const mismatchCardProg = document.getElementById('mismatch-progress-card');
     const bannedCardProg = document.getElementById('banned-progress-card');
     const altCardProg = document.getElementById('alt-progress-card');
-    const trustCardProg = document.getElementById('trust-progress-card');
-    const restrictedCardProg = document.getElementById('restricted-progress-card');
-    const structuredCardProg = document.getElementById('structured-progress-card');
+    const aiCardProg = document.getElementById('ai-progress-card');
     applyProgressCardStyles(outboundCardProg, outboundCount, data.outbound_count || 0);
     applyProgressCardStyles(brokenCardProg, brokenCount, data.broken_count || 0);
     applyProgressCardStyles(mismatchCardProg, mismatchCount, mismatchLen);
     applyProgressCardStyles(bannedCardProg, bannedCount, bannedLen);
     applyProgressCardStyles(altCardProg, altCount, altLen);
-    // Apply styles for new checks using the counts computed above
-    applyProgressCardStyles(trustCardProg, trustCount, trustIssues);
-    applyProgressCardStyles(restrictedCardProg, restrictedCount, restrictedIssues);
-    applyProgressCardStyles(structuredCardProg, structuredCount, structuredIssues);
+    // Apply styles for AI check using the aggregated error count
+    applyProgressCardStyles(aiCardProg, aiCount, aiIssuesCount);
     
     // Update live URL display
     updateLiveUrlDisplay(data);
@@ -1311,9 +1285,8 @@ function updateProgress(data) {
         // Update alt text issues section
         updateAltSection(data.alt_text_issues);
         // Update new sections for trust, restricted and structured data issues
-        updateTrustSection(data.trust_signal_issues);
-        updateRestrictedSection(data.restricted_content_pages, data.meta_robots_pages, data.robots_disallowed);
-        updateStructuredSection(data.structured_data_issues);
+        // Aggregate and update AI check issues
+        updateAiSection(data);
         // Update compliance progress circle
         updateCompliance(data.compliance || 0, 'progress');
         // Append debug logs to the log window
@@ -1409,29 +1382,18 @@ function showResults(data) {
         finalAlt.innerHTML = `${finalAltRatio} <i class="fas ${finalAltIcon} ml-1"></i>`;
     }
 
-    // Compute final counts for trust signals, restricted content and structured data
-    const trustFinal = (data.trust_signal_issues && Array.isArray(data.trust_signal_issues)) ? data.trust_signal_issues.length : 0;
-    const restrictedFinal = (data.restricted_content_pages && Array.isArray(data.restricted_content_pages) ? data.restricted_content_pages.length : 0) +
-                            (data.meta_robots_pages && Array.isArray(data.meta_robots_pages) ? data.meta_robots_pages.length : 0) +
-                            (data.robots_disallowed && Array.isArray(data.robots_disallowed) ? data.robots_disallowed.length : 0);
-    const structuredFinal = (data.structured_data_issues && Array.isArray(data.structured_data_issues)) ? data.structured_data_issues.length : 0;
-    const trustTotalFinal = (data.trust_check_pages && data.trust_check_pages > 0) ? data.trust_check_pages : (pagesScanned > 0 ? pagesScanned : 0);
-    const restrictedTotalFinal = (data.restricted_check_pages && data.restricted_check_pages > 0) ? data.restricted_check_pages : (pagesScanned > 0 ? pagesScanned : 0);
-    const structuredTotalFinal = (data.structured_check_pages && data.structured_check_pages > 0) ? data.structured_check_pages : (pagesScanned > 0 ? pagesScanned : 0);
-    if (typeof finalTrust !== 'undefined') {
-        const ratio = trustTotalFinal > 0 ? `${trustFinal}/${trustTotalFinal}` : `${trustFinal}`;
-        const icon = trustFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
-        finalTrust.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
+    // Compute final counts for the AI check using unified ai_issues and ai_check_pages
+    const aiFinalCount = (data.ai_issues && Array.isArray(data.ai_issues)) ? data.ai_issues.length : 0;
+    let aiTotalFinal;
+    if (data.ai_check_pages && data.ai_check_pages > 0) {
+        aiTotalFinal = data.ai_check_pages;
+    } else {
+        aiTotalFinal = pagesScanned > 0 ? pagesScanned : 0;
     }
-    if (typeof finalRestricted !== 'undefined') {
-        const ratio = restrictedTotalFinal > 0 ? `${restrictedFinal}/${restrictedTotalFinal}` : `${restrictedFinal}`;
-        const icon = restrictedFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
-        finalRestricted.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
-    }
-    if (typeof finalStructured !== 'undefined') {
-        const ratio = structuredTotalFinal > 0 ? `${structuredFinal}/${structuredTotalFinal}` : `${structuredFinal}`;
-        const icon = structuredFinal > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
-        finalStructured.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
+    if (typeof finalAi !== 'undefined') {
+        const ratio = aiTotalFinal > 0 ? `${aiFinalCount}/${aiTotalFinal}` : `${aiFinalCount}`;
+        const icon = aiFinalCount > 0 ? 'fa-times-circle text-red-600' : 'fa-check-circle text-green-600';
+        finalAi.innerHTML = `${ratio} <i class="fas ${icon} ml-1"></i>`;
     }
     // Define a helper to apply consistent styling to summary cards based on count
     function applyCardStyles(cardEl, numberEl, count) {
@@ -1453,17 +1415,13 @@ function showResults(data) {
     const mismatchCard = document.getElementById('mismatch-card');
     const bannedCard = document.getElementById('banned-card');
     const altCard = document.getElementById('alt-card');
-    const trustCard = document.getElementById('trust-card');
-    const restrictedCard = document.getElementById('restricted-card');
-    const structuredCard = document.getElementById('structured-card');
+    const aiCard = document.getElementById('ai-card');
     applyCardStyles(outboundCard, finalOutbound, outboundLen);
     applyCardStyles(brokenCard, finalBroken, brokenLen);
     applyCardStyles(mismatchCard, finalMismatch, mismatchesFinal);
     applyCardStyles(bannedCard, finalBanned, bannedFinal);
     applyCardStyles(altCard, finalAlt, altFinal);
-    applyCardStyles(trustCard, finalTrust, trustFinal);
-    applyCardStyles(restrictedCard, finalRestricted, restrictedFinal);
-    applyCardStyles(structuredCard, finalStructured, structuredFinal);
+    applyCardStyles(aiCard, finalAi, aiFinalCount);
 
     // Set download log link
     try {
@@ -1473,13 +1431,14 @@ function showResults(data) {
         }
     } catch (e) {}
 
-    // Populate the issue lists for the new checks
+    // Populate the AI issues list.  We no longer show the separate trust,
+    // restricted, or structured sections in the final results; instead we
+    // aggregate them into a single AI check section.  Use try/catch to avoid
+    // breaking the UI if there is an unexpected error.
     try {
-        updateTrustSection(data.trust_signal_issues);
-        updateRestrictedSection(data.restricted_content_pages, data.meta_robots_pages, data.robots_disallowed);
-        updateStructuredSection(data.structured_data_issues);
+        updateAiSection(data);
     } catch (e) {
-        console.error('Error updating new sections in results:', e);
+        console.error('Error updating AI section in results:', e);
     }
     
     // Determine the crawl duration if available.  We will include this in the
@@ -1782,10 +1741,8 @@ function resetAll() {
     if (typeof altCount !== 'undefined') altCount.textContent = '0';
     if (typeof finalAlt !== 'undefined') finalAlt.textContent = '-';
 
-    // Reset new counts for trust, restricted and structured data
-    if (typeof trustCount !== 'undefined') trustCount.textContent = '0';
-    if (typeof restrictedCount !== 'undefined') restrictedCount.textContent = '0';
-    if (typeof structuredCount !== 'undefined') structuredCount.textContent = '0';
+    // Reset new counts for AI check
+    if (typeof aiCount !== 'undefined') aiCount.textContent = '0';
 
     // Reset debug log
     if (typeof debugLog !== 'undefined') debugLog.textContent = '';
@@ -1793,13 +1750,9 @@ function resetAll() {
     if (typeof debugLogContainer !== 'undefined') debugLogContainer.classList.add('hidden');
     if (typeof downloadLogLink !== 'undefined') downloadLogLink.classList.add('hidden');
 
-    // Reset trust, restricted and structured sections
-    if (typeof trustSection !== 'undefined') trustSection.classList.add('hidden');
-    if (typeof trustList !== 'undefined') trustList.innerHTML = '';
-    if (typeof restrictedSection !== 'undefined') restrictedSection.classList.add('hidden');
-    if (typeof restrictedList !== 'undefined') restrictedList.innerHTML = '';
-    if (typeof structuredSection !== 'undefined') structuredSection.classList.add('hidden');
-    if (typeof structuredList !== 'undefined') structuredList.innerHTML = '';
+    // Reset AI section
+    if (typeof aiSection !== 'undefined') aiSection.classList.add('hidden');
+    if (typeof aiList !== 'undefined') aiList.innerHTML = '';
 
     // Reset client-side trackers for monotonic counts and denominators. Without
     // resetting these, values from a previous crawl may persist and cause

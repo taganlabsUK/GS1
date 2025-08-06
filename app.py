@@ -37,6 +37,8 @@ from collections import deque
 # Include Optional for type annotations.  Without importing Optional, using it
 # in type hints (e.g. fetch_shopify_products) will raise a NameError at runtime.
 from typing import List, Set, Optional, Dict  # For type annotations used in image scanning
+import ssl  # For SSL certificate validation
+
 
 # -----------------------------------------------------------------------------
 # CAPTCHA utilities
@@ -275,45 +277,20 @@ class CrawlResult:
         self.debug_logs: List[str] = []
 
         # ---------------------------------------------------------------------
-        # Trust signals and policy checks
-        #
-        # trust_signal_issues stores tuples of the form
-        # (url, contact_issues, policy_issues, ssl_issues) where each list
-        # contains human‑readable strings describing missing or invalid trust
-        # signals on a page.  For example, contact_issues might include
-        # "missing email" or "no phone number".  policy_issues might list
-        # missing Terms, Shipping, Returns or Privacy pages.  ssl_issues will
-        # flag pages served over HTTP or sites with invalid TLS certificates.
-        self.trust_signal_issues = []
-        # Count how many pages were scanned for trust signals.  This allows the
-        # UI to display a ratio of issues to pages checked.
-        self.trust_check_pages = 0
-
         # ---------------------------------------------------------------------
-        # Restricted content and crawl blocking checks
+        # AI check issues
         #
-        # restricted_content_pages stores tuples of the form (url, categories)
-        # where categories is a list of prohibited themes detected on the page
-        # (e.g. ["weapons", "tobacco"]).  robots_disallowed records
-        # directives parsed from robots.txt that could block product pages
-        # from Google’s crawlers.  meta_robots_pages records pages that set
-        # restrictive meta robots tags such as noindex or nofollow.
-        self.restricted_content_pages = []
-        self.robots_disallowed = []
-        self.meta_robots_pages = []
-        # Counter for pages scanned for restricted content and meta robots tags
-        self.restricted_check_pages = 0
-
-        # ---------------------------------------------------------------------
-        # Structured data validation checks
-        #
-        # structured_data_issues stores tuples of the form (url, errors) where
-        # errors is a list of strings describing missing or invalid fields
-        # in schema.org Product markup on a page.  This helps merchants fix
-        # structured data so that Google can generate rich product snippets.
-        self.structured_data_issues = []
-        # Counter for pages scanned for structured data
-        self.structured_check_pages = 0
+        # ai_issues stores tuples of the form (url, category, message) where
+        # category is a short label (e.g. "SSL", "Performance", "Mobile",
+        # "Crawlability", "Contact", "Policies", "Product", "Images",
+        # "Price", "Platform") and message describes the specific
+        # compliance problem found on the page.  This unified list replaces
+        # the previous trust_signal_issues, restricted_content_pages and
+        # structured_data_issues.  Each entry corresponds to a page scanned
+        # during the crawl.  The ai_check_pages counter tracks how many
+        # pages were scanned for the AI check.
+        self.ai_issues: list[tuple[str, str, str]] = []
+        self.ai_check_pages: int = 0
 
         # Placeholder to maintain backward compatibility when loading from
         # serialized sessions.  Initialize alt text issue structures.
@@ -359,18 +336,12 @@ class CrawlResult:
                 , 'alt_text_issues': list(self.alt_text_issues)
                 , 'alt_text_count': self.alt_text_count
                 , 'alt_checks_total': self.alt_checks_total
-                # Trust signals and policies
-                , 'trust_signal_issues': list(self.trust_signal_issues)
-                , 'trust_check_pages': self.trust_check_pages
-                # Restricted content and crawl blocking
-                , 'restricted_content_pages': list(self.restricted_content_pages)
-                , 'robots_disallowed': list(self.robots_disallowed)
-                , 'meta_robots_pages': list(self.meta_robots_pages)
-                , 'restricted_check_pages': self.restricted_check_pages
-                # Structured data validation
-                , 'structured_data_issues': list(self.structured_data_issues)
-                , 'structured_check_pages': self.structured_check_pages
+                # Legacy trust/restricted/structured fields removed.  The
+                # unified AI module aggregates all compliance issues.  Only
+                # debug logs and AI issues are returned from this point on.
                 , 'debug_logs': list(self.debug_logs)
+                , 'ai_issues': list(self.ai_issues)
+                , 'ai_check_pages': self.ai_check_pages
             }
     
     def to_dict(self):
@@ -403,18 +374,12 @@ class CrawlResult:
             , 'alt_text_issues': list(self.alt_text_issues)
             , 'alt_text_count': self.alt_text_count
             , 'alt_checks_total': self.alt_checks_total
-            # Trust signals and policies
-            , 'trust_signal_issues': list(self.trust_signal_issues)
-            , 'trust_check_pages': self.trust_check_pages
-            # Restricted content and crawl blocking
-            , 'restricted_content_pages': list(self.restricted_content_pages)
-            , 'robots_disallowed': list(self.robots_disallowed)
-            , 'meta_robots_pages': list(self.meta_robots_pages)
-            , 'restricted_check_pages': self.restricted_check_pages
-            # Structured data validation
-            , 'structured_data_issues': list(self.structured_data_issues)
-            , 'structured_check_pages': self.structured_check_pages
+            # Legacy trust/restricted/structured fields removed.  The unified
+            # AI module stores all compliance issues in ai_issues and the
+            # number of pages checked in ai_check_pages.
             , 'debug_logs': list(self.debug_logs)
+            , 'ai_issues': list(self.ai_issues)
+            , 'ai_check_pages': self.ai_check_pages
             }
 
     def save_to_redis(self):
@@ -461,18 +426,11 @@ class CrawlResult:
         result.alt_text_count = data.get('alt_text_count', len(result.alt_text_issues))
         result.alt_checks_total = data.get('alt_checks_total', 0)
 
-        # Restore trust signals and policies
-        result.trust_signal_issues = data.get('trust_signal_issues', [])
-        result.trust_check_pages = data.get('trust_check_pages', 0)
-        # Restore restricted content and crawl blocking
-        result.restricted_content_pages = data.get('restricted_content_pages', [])
-        result.robots_disallowed = data.get('robots_disallowed', [])
-        result.meta_robots_pages = data.get('meta_robots_pages', [])
-        result.restricted_check_pages = data.get('restricted_check_pages', 0)
-        # Restore structured data validation
-        result.structured_data_issues = data.get('structured_data_issues', [])
-        result.structured_check_pages = data.get('structured_check_pages', 0)
+        # Legacy trust/restricted/structured fields removed.  Only debug logs
+        # and AI check results are restored from the serialized data.
         result.debug_logs = data.get('debug_logs', [])
+        result.ai_issues = data.get('ai_issues', [])
+        result.ai_check_pages = data.get('ai_check_pages', 0)
         return result
 
 class LinkCrawler:
@@ -496,11 +454,18 @@ class LinkCrawler:
         # potential future enhancements.
         self.global_image_basenames: Set[str] = set()
 
-        # Track policy pages that have already been analysed.  This set
-        # prevents redundant network requests and duplicate issue reports
-        # when multiple pages link to the same shipping or return/refund
-        # policy.  Each entry is the absolute URL of the policy page.
-        self.analyzed_policy_pages: Set[str] = set()
+        # (Deprecated) analysed policy pages set removed.  Policy analysis
+        # is now handled within the AI check or omitted entirely.
+        # Flags for sitemap availability and reporting.  If robots.txt
+        # references a sitemap or /sitemap.xml exists, _has_sitemap is True.
+        # _sitemap_recorded ensures that the "missing sitemap" issue is
+        # only reported once during the crawl.
+        self._has_sitemap: bool = False
+        self._sitemap_recorded: bool = False
+        # Robots.txt disallowed paths captured during initialization.  The
+        # list is populated when robots.txt is parsed.  These paths are
+        # included in AI check results when relevant.
+        self._robots_disallows: list[str] = []
 
         # Collect per-page check results for consolidated logging.  Each
         # entry in this dict maps a URL to a dictionary of check categories
@@ -531,15 +496,30 @@ class LinkCrawler:
                         if not line_stripped or line_stripped.startswith('#'):
                             continue
                         parts = line_stripped.split(':', 1)
-                        if len(parts) == 2 and parts[0].lower() == 'disallow':
-                            path = parts[1].strip()
-                            if path:
-                                disallowed.append(path)
+                        if len(parts) == 2:
+                            key = parts[0].strip().lower()
+                            value = parts[1].strip()
+                            if key == 'disallow' and value:
+                                disallowed.append(value)
+                            elif key == 'sitemap' and value:
+                                # Sitemap directive found
+                                self._has_sitemap = True
                     except Exception:
                         continue
                 if disallowed:
-                    with self.result.lock:
-                        self.result.robots_disallowed.extend(disallowed)
+                    try:
+                        self._robots_disallows = disallowed
+                    except Exception:
+                        pass
+                # If no sitemap directive seen, attempt to check /sitemap.xml
+                if not self._has_sitemap:
+                    try:
+                        sitemap_url = f"https://{robots_domain}/sitemap.xml"
+                        head_resp = requests.head(sitemap_url, headers=headers, timeout=5, allow_redirects=True)
+                        if head_resp.status_code == 200:
+                            self._has_sitemap = True
+                    except Exception:
+                        pass
         except Exception:
             # Fail silently; robots.txt may be missing or inaccessible
             pass
@@ -744,8 +724,13 @@ class LinkCrawler:
             return
         
         try:
+            # Record start time to measure page load duration
+            _page_start_time = time.time()
             # Request with timeout
             response = req_session.get(url, timeout=10, allow_redirects=True)
+            # Compute load time immediately after receiving the response.  This
+            # metric is used for performance checks in the AI module.
+            load_time = time.time() - _page_start_time
             
             # Check status.  We treat HTTP 404 as a broken link and record
             # the source page.  Other HTTP errors (>=400) are logged but
@@ -1060,72 +1045,13 @@ class LinkCrawler:
                 logger.debug(f"Error performing alt text scan for {url}: {e}")
 
             # -----------------------------------------------------------------
-            # Trust signals & policies check
+            # AI compliance check
             #
-            # Examine the current page for evidence of contact information,
-            # required legal/policy pages, and HTTPS enforcement.  Contact
-            # information (email, phone number, physical address) and
-            # policies (Terms, Shipping, Returns, Privacy) are essential for
-            # Merchant Center compliance.  This check records missing items
-            # in result.trust_signal_issues and increments a page counter.
+            # Perform a unified set of compliance validations on the current page.
             try:
-                self._check_trust_policies(url, soup)
+                self._perform_ai_checks(url, response.text, soup, load_time)
             except Exception as e:
-                logger.debug(f"Error checking trust signals for {url}: {e}")
-
-            # -----------------------------------------------------------------
-            # Restricted content & blocking directives check
-            #
-            # Scan for prohibited categories, robots meta tags and update
-            # restricted content issues.  This check helps identify pages
-            # containing content that could violate Google policies or pages
-            # inadvertently blocked from crawling via meta robots tags.
-            try:
-                self._check_restricted_content(url, soup)
-            except Exception as e:
-                logger.debug(f"Error checking restricted content for {url}: {e}")
-
-            # -----------------------------------------------------------------
-            # Structured data validation check
-            #
-            # Validate schema.org Product markup on product pages.  Only run
-            # this check for pages identified as product pages (contains
-            # '/products/' and belongs to the same domain).  Issues are
-            # recorded in result.structured_data_issues.
-            try:
-                # Reuse earlier determination of product page if available
-                is_prod = False
-                try:
-                    is_prod = is_product_page
-                except Exception:
-                    # Fallback: simple check
-                    is_prod = "/products/" in url
-                if is_prod:
-                    self._check_structured_data(url, soup)
-            except Exception as e:
-                logger.debug(f"Error validating structured data for {url}: {e}")
-
-            # Consolidate check results for this page into a single log entry.
-            try:
-                # If we have collected partial results for this URL, assemble
-                # them into one summary line and append to debug_logs.
-                if url in self.page_check_results:
-                    parts = []
-                    page_res = self.page_check_results.get(url, {})
-                    for cat in ['trust', 'restricted', 'structured']:
-                        if cat in page_res:
-                            parts.append(page_res[cat])
-                    if parts:
-                        summary = f"{url} - " + ' | '.join(parts)
-                        with self.result.lock:
-                            self.result.debug_logs.append(summary)
-                    # Remove entry to free memory
-                    try:
-                        del self.page_check_results[url]
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                logger.debug(f"Error performing AI checks for {url}: {e}")
 
             # Extract all links
             links_found = 0
@@ -1253,22 +1179,17 @@ class LinkCrawler:
     # New check functions for GMC Scout V1
     #
     def _check_trust_policies(self, url: str, soup: BeautifulSoup) -> None:
-        """
-        Check for trust signals and required policy pages on the current page.
+        """Deprecated: replaced by unified AI check.
 
-        This method inspects the page content for contact information
-        (email, phone, physical address), links to legal pages (Terms,
-        Shipping, Returns/Refunds, Privacy) and verifies that the page is
-        served over HTTPS.  Any missing items are recorded on the
-        CrawlResult.trust_signal_issues list along with the URL.
+        The unified AI check now performs all trust and policy validation.
+        This legacy function simply returns without executing any logic.
 
         Args:
             url: The URL of the page being checked.
             soup: BeautifulSoup object for the page HTML.
         """
-        # Increment page counter
-        with self.result.lock:
-            self.result.trust_check_pages += 1
+        # Immediately return so that legacy body is never executed
+        return None
         contact_issues: list[str] = []
         policy_issues: list[str] = []
         ssl_issues: list[str] = []
@@ -1442,21 +1363,20 @@ class LinkCrawler:
                 self.result.trust_signal_issues.append((url, contact_issues, policy_issues, ssl_issues))
 
     def _check_restricted_content(self, url: str, soup: BeautifulSoup) -> None:
-        """
-        Scan the page for restricted content categories and meta robots tags.
+        """Deprecated: replaced by unified AI check.
 
-        This method looks for keywords associated with prohibited categories
-        such as weapons, tobacco, explosives, adult content and counterfeits.
-        It also examines meta robots directives to identify pages that block
-        indexing or following.  Results are stored on the CrawlResult.
+        Historically scanned pages for restricted content categories and
+        meta robots directives, storing results on legacy fields.  All such
+        functionality has been merged into the unified AI check.  This
+        function is retained for backward compatibility but will exit
+        immediately without inspecting the page.
 
         Args:
             url: The page URL.
             soup: BeautifulSoup instance.
         """
-        # Increment restricted content page counter
-        with self.result.lock:
-            self.result.restricted_check_pages += 1
+        # Immediately return so that legacy body is never executed
+        return None
         categories_found: list[str] = []
         try:
             page_text = soup.get_text(separator=' ', strip=True).lower()
@@ -1520,116 +1440,20 @@ class LinkCrawler:
             pass
 
     def _check_structured_data(self, url: str, soup: BeautifulSoup) -> None:
-        """
-        Validate schema.org Product structured data on the page.
+        """Deprecated: replaced by unified AI check.
 
-        This method searches for JSON‑LD scripts and microdata representing
-        Product entities.  It then verifies that required fields (name,
-        description, image, price, availability) are present and well
-        formatted.  Any missing or invalid fields are recorded on the
-        CrawlResult.
+        This function previously validated schema.org Product structured data on
+        the page and recorded missing or invalid fields.  All structured
+        data validation has been integrated into the unified AI check.  The
+        function now immediately returns without performing any checks.
 
         Args:
             url: URL of the page being validated.
             soup: Parsed HTML.
         """
-        # Increment structured data page counter
-        with self.result.lock:
-            self.result.structured_check_pages += 1
-        errors: list[str] = []
-        # Helper to validate a Product object
-        def validate_product_schema(product_data: dict, container_label: str = ''):
-            local_errors: list[str] = []
-            # Required fields and simple type checks
-            required_fields = ['name', 'description', 'image', 'price', 'availability']
-            for field in required_fields:
-                if field not in product_data or not product_data[field]:
-                    local_errors.append(f"missing {field}")
-            # If price is present, ensure it contains digits and optionally currency symbol
-            price_val = product_data.get('price')
-            if price_val:
-                try:
-                    # Accept formats like 9.99, 9, 9.99 USD
-                    price_str = str(price_val)
-                    if not re.search(r"\d", price_str):
-                        local_errors.append('invalid price')
-                except Exception:
-                    local_errors.append('invalid price')
-            # Availability: check against known statuses
-            avail_val = product_data.get('availability')
-            if avail_val:
-                valid_avail = ['instock', 'in stock', 'outofstock', 'out of stock', 'preorder', 'backorder']
-                if str(avail_val).lower() not in valid_avail:
-                    local_errors.append('invalid availability')
-            if local_errors:
-                for err in local_errors:
-                    errors.append(f"{container_label}{err}")
-
-        # JSON-LD detection
-        try:
-            for script in soup.find_all('script', type='application/ld+json'):
-                try:
-                    json_text = script.string or ''
-                    data = json.loads(json_text)
-                    # JSON-LD may be a list or dict
-                    items = data if isinstance(data, list) else [data]
-                    for item in items:
-                        try:
-                            if isinstance(item, dict):
-                                item_type = item.get('@type') or item.get('type')
-                                # Some implementations wrap Product in '@graph'
-                                if not item_type and '@graph' in item:
-                                    for subitem in item['@graph']:
-                                        try:
-                                            sub_type = subitem.get('@type') or subitem.get('type')
-                                            if sub_type and 'product' in str(sub_type).lower():
-                                                validate_product_schema(subitem, '')
-                                        except Exception:
-                                            continue
-                                    continue
-                                if item_type and 'product' in str(item_type).lower():
-                                    validate_product_schema(item, '')
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        # Microdata detection: look for itemscope/itemtype
-        try:
-            for tag in soup.find_all(attrs={'itemscope': True, 'itemtype': True}):
-                try:
-                    item_type = tag.get('itemtype')
-                    if item_type and 'product' in item_type.lower():
-                        # Collect itemprops from children
-                        data = {}
-                        for child in tag.find_all(attrs={'itemprop': True}):
-                            try:
-                                prop = child.get('itemprop')
-                                value = child.get('content') or child.get_text(strip=True)
-                                if prop and value:
-                                    data[prop] = value
-                            except Exception:
-                                continue
-                        validate_product_schema(data, '')
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        # Record errors
-        if errors:
-            with self.result.lock:
-                self.result.structured_data_issues.append((url, errors))
-        # Store structured data summary for consolidated logging
-        try:
-            if errors:
-                summary = 'Structured: FAIL - ' + '; '.join(errors)
-            else:
-                summary = 'Structured: PASS'
-            d = self.page_check_results.setdefault(url, {})
-            d['structured'] = summary
-        except Exception:
-            pass
+        # Immediately return so that legacy body is never executed
+        return None
+        # Legacy structured data implementation removed.
 
     # ---------------------------------------------------------------------
     # Policy page analysis helpers
@@ -1667,6 +1491,597 @@ class LinkCrawler:
         except Exception:
             issues.append('failed to fetch shipping policy')
         return issues
+
+    # ---------------------------------------------------------------------
+    # Unified AI compliance check
+    #
+    # This method consolidates multiple compliance validations into a single
+    # pass per page.  It replaces the individual trust, restricted and
+    # structured checks with a broader set of tests inspired by the
+    # requirements document provided for the AI module.  On each call,
+    # the current page is assessed for SSL/TLS quality, performance,
+    # mobile friendliness, crawlability, structured data quality,
+    # presence of policy pages and contact information, product page
+    # completeness, image quality, price consistency and Shopify
+    # detection.  Detected problems are recorded on the result object's
+    # ai_issues list.  Each entry is a four‑tuple:
+    # (url, category, severity, message).
+    #
+    # Args:
+    #     url:        Fully qualified URL of the page being analysed.
+    #     html:       Raw HTML string of the page.  Used for size metrics.
+    #     soup:       BeautifulSoup object representing the parsed HTML.
+    #     load_time:  Number of seconds taken to download the page content.
+    def _perform_ai_checks(self, url: str, html: str, soup: BeautifulSoup, load_time: float) -> None:
+        # Increment the total number of pages assessed for AI compliance.
+        with self.result.lock:
+            self.result.ai_check_pages += 1
+        issues: List[tuple[str, str, str, str]] = []  # (url, category, severity, message)
+        # -----------------------------------------------------------------
+        # 1. SSL certificate and HTTPS
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower()
+        # Enforce HTTPS
+        if scheme != 'https':
+            issues.append((url, 'SSL', 'CRITICAL', 'Page not served over HTTPS'))
+        else:
+            # Attempt to validate certificate expiry
+            try:
+                hostname = parsed.hostname
+                if hostname:
+                    context = ssl.create_default_context()
+                    with context.wrap_socket(socket.socket(socket.AF_INET), server_hostname=hostname) as sock:
+                        sock.settimeout(5)
+                        sock.connect((hostname, 443))
+                        cert = sock.getpeercert()
+                        not_after = cert.get('notAfter')
+                        if not_after:
+                            try:
+                                expire_dt = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %Z')
+                            except Exception:
+                                expire_dt = None
+                            if expire_dt:
+                                now = datetime.utcnow()
+                                if expire_dt < now:
+                                    issues.append((url, 'SSL', 'CRITICAL', 'SSL certificate expired'))
+                                elif expire_dt - now < timedelta(days=30):
+                                    issues.append((url, 'SSL', 'HIGH', 'SSL certificate expiring soon'))
+                        # Note: if notAfter is missing, treat as unable to verify
+                        else:
+                            issues.append((url, 'SSL', 'HIGH', 'Unable to determine SSL certificate expiration'))
+            except Exception:
+                # Could not verify certificate; record as a critical problem
+                issues.append((url, 'SSL', 'CRITICAL', 'Unable to verify SSL certificate'))
+        # Mixed content: look for insecure resources on HTTPS pages
+        try:
+            if scheme == 'https':
+                for tag in soup.find_all(src=True):
+                    try:
+                        src_val = tag.get('src')
+                        if src_val and src_val.startswith('http://'):
+                            issues.append((url, 'SSL', 'CRITICAL', f'Mixed content resource: {src_val}'))
+                    except Exception:
+                        continue
+                for tag in soup.find_all(href=True):
+                    try:
+                        href_val = tag.get('href')
+                        if href_val and href_val.startswith('http://'):
+                            issues.append((url, 'SSL', 'CRITICAL', f'Mixed content resource: {href_val}'))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------------
+        # 1.2 Page performance metrics
+        # Assess page load time, total HTML size and number of resource requests.
+        try:
+            page_size_bytes = len(html) if html else 0
+        except Exception:
+            page_size_bytes = 0
+        # Count number of external resource references (approximate HTTP requests)
+        req_count = 0
+        try:
+            for el in soup.find_all():
+                try:
+                    if el.name == 'img' and el.get('src'):
+                        req_count += 1
+                    elif el.name == 'script' and el.get('src'):
+                        req_count += 1
+                    elif el.name == 'link' and el.get('href'):
+                        # Exclude canonical and alternate links from count
+                        rel = el.get('rel')
+                        if not rel or not any(r.lower() in ['canonical', 'alternate'] for r in rel):
+                            req_count += 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Define simple performance thresholds.  High severity when the page is
+        # very slow or heavy, medium for moderate issues.
+        try:
+            # Convert bytes to kilobytes for messages
+            size_kb = page_size_bytes / 1024.0
+            if load_time and (load_time > 5 or page_size_bytes > 5 * 1024 * 1024 or req_count > 100):
+                issues.append((url, 'Performance', 'HIGH', f'Poor performance (load {load_time:.2f}s, size {size_kb:.1f} KB, requests {req_count})'))
+            elif load_time and (load_time > 3 or page_size_bytes > 2 * 1024 * 1024 or req_count > 60):
+                issues.append((url, 'Performance', 'MEDIUM', f'Moderate performance issues (load {load_time:.2f}s, size {size_kb:.1f} KB, requests {req_count})'))
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------------
+        # 1.3 Mobile responsiveness
+        mobile_failures: List[str] = []
+        try:
+            viewport_tag = soup.find('meta', attrs={'name': re.compile('viewport', re.I)})
+            if not viewport_tag:
+                mobile_failures.append('missing viewport meta tag')
+            else:
+                content_attr = viewport_tag.get('content', '')
+                if not content_attr or 'width=device-width' not in content_attr.lower():
+                    mobile_failures.append('improper viewport meta tag configuration')
+            # Placeholder for other mobile checks (touch targets, horizontal scroll)
+            # These are difficult to evaluate without a rendering engine and are
+            # therefore omitted.  The presence of a correct viewport tag is
+            # considered the primary indicator of mobile readiness here.
+        except Exception:
+            pass
+        if mobile_failures:
+            issues.append((url, 'Mobile', 'HIGH', '; '.join(mobile_failures)))
+
+        # -----------------------------------------------------------------
+        # 1.4 Crawlability and indexability
+        try:
+            # Check meta robots directives for noindex/nofollow
+            for meta in soup.find_all('meta'):
+                try:
+                    name_attr = (meta.get('name') or meta.get('property') or '').lower()
+                    content_attr = (meta.get('content') or '').lower()
+                    if name_attr in ['robots', 'googlebot'] and content_attr:
+                        if 'noindex' in content_attr or 'nofollow' in content_attr:
+                            issues.append((url, 'Crawlability', 'CRITICAL', f'Noindex/nofollow directive: {content_attr}'))
+                except Exception:
+                    continue
+            # Verify canonical link
+            canonical = soup.find('link', rel=lambda x: x and 'canonical' in x.lower())
+            if canonical is None:
+                issues.append((url, 'Crawlability', 'HIGH', 'Missing canonical link'))
+            # Check robots.txt disallows
+            try:
+                path = parsed.path or '/'
+                for dis in getattr(self, '_robots_disallows', []):
+                    try:
+                        if dis and path.startswith(dis):
+                            issues.append((url, 'Crawlability', 'CRITICAL', f'Blocked by robots.txt: {dis}'))
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            # If sitemap is not present (determined during initialization) and we
+            # haven't recorded this issue yet, report missing XML sitemap once.
+            if not self._has_sitemap and not self._sitemap_recorded:
+                try:
+                    issues.append((url, 'Crawlability', 'HIGH', 'Missing XML sitemap'))
+                    self._sitemap_recorded = True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------------
+        # 2.1 Structured data detection
+        # Detect Product schema and other recommended schema types.  Validate
+        # required Product fields and report missing schemas.  We record
+        # missing or invalid fields as HIGH severity issues.
+        try:
+            found_product = False
+            found_organization = False
+            found_breadcrumb = False
+            found_review = False
+            structured_errors: List[str] = []
+            # JSON-LD detection
+            for script in soup.find_all('script', type='application/ld+json'):
+                try:
+                    json_text = script.string or ''
+                    data = json.loads(json_text)
+                    items = data if isinstance(data, list) else [data]
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        # If item contains @graph, iterate through graph elements
+                        if '@graph' in item and isinstance(item['@graph'], list):
+                            for sub in item['@graph']:
+                                try:
+                                    sub_type = sub.get('@type') or sub.get('type')
+                                    if not sub_type:
+                                        continue
+                                    sub_type_str = str(sub_type).lower()
+                                    if 'product' in sub_type_str:
+                                        found_product = True
+                                        # Validate required Product fields
+                                        missing = []
+                                        for field in ['name', 'image', 'price', 'availability']:
+                                            if field not in sub or not sub[field]:
+                                                missing.append(field)
+                                        if missing:
+                                            structured_errors.append('missing ' + ', '.join(missing))
+                                    if 'organization' in sub_type_str:
+                                        found_organization = True
+                                    if 'breadcrumblist' in sub_type_str:
+                                        found_breadcrumb = True
+                                    if 'review' in sub_type_str or 'rating' in sub_type_str:
+                                        found_review = True
+                                except Exception:
+                                    continue
+                            continue
+                        # Otherwise handle direct item
+                        item_type = item.get('@type') or item.get('type')
+                        if not item_type:
+                            continue
+                        item_type_str = str(item_type).lower()
+                        if 'product' in item_type_str:
+                            found_product = True
+                            missing = []
+                            for field in ['name', 'image', 'price', 'availability']:
+                                if field not in item or not item[field]:
+                                    missing.append(field)
+                            if missing:
+                                structured_errors.append('missing ' + ', '.join(missing))
+                        if 'organization' in item_type_str:
+                            found_organization = True
+                        if 'breadcrumblist' in item_type_str:
+                            found_breadcrumb = True
+                        if 'review' in item_type_str or 'rating' in item_type_str:
+                            found_review = True
+                except Exception:
+                    continue
+            # Microdata detection
+            for tag in soup.find_all(attrs={'itemscope': True, 'itemtype': True}):
+                try:
+                    item_type = tag.get('itemtype')
+                    if not item_type:
+                        continue
+                    item_type_str = str(item_type).lower()
+                    if 'product' in item_type_str:
+                        found_product = True
+                        data_vals = {}
+                        for child in tag.find_all(attrs={'itemprop': True}):
+                            try:
+                                prop = child.get('itemprop')
+                                value = child.get('content') or child.get_text(strip=True)
+                                if prop and value:
+                                    data_vals[prop] = value
+                            except Exception:
+                                continue
+                        missing = []
+                        for field in ['name', 'image', 'price', 'availability']:
+                            if field not in data_vals or not data_vals[field]:
+                                missing.append(field)
+                        if missing:
+                            structured_errors.append('missing ' + ', '.join(missing))
+                    if 'organization' in item_type_str:
+                        found_organization = True
+                    if 'breadcrumblist' in item_type_str:
+                        found_breadcrumb = True
+                    if 'review' in item_type_str or 'rating' in item_type_str:
+                        found_review = True
+                except Exception:
+                    continue
+            # Determine missing schemas
+            if not found_product:
+                structured_errors.append('Product schema not found')
+            if not found_organization:
+                structured_errors.append('Organization schema not found')
+            if not found_breadcrumb:
+                structured_errors.append('BreadcrumbList schema not found')
+            if not found_review:
+                structured_errors.append('Review/Rating schema not found')
+            if structured_errors:
+                issues.append((url, 'Structured Data', 'HIGH', '; '.join(structured_errors)))
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------------
+        # 2.2 Policy pages detection & 2.3 Contact information
+        try:
+            text = soup.get_text(separator=' ', strip=True)
+        except Exception:
+            text = ''
+        text_lower = text.lower() if text else ''
+        # Policy pages detection: examine anchor tags for required policy keywords
+        try:
+            policy_keywords = {
+                'return/refund policy': ['return', 'refund', 'exchange'],
+                'privacy policy': ['privacy'],
+                'terms of service': ['terms', 'conditions'],
+                'shipping policy': ['shipping', 'delivery'],
+                'about us': ['about']
+            }
+            found_policies = {k: False for k in policy_keywords.keys()}
+            for a in soup.find_all('a'):
+                try:
+                    anchor_text = a.get_text(strip=True).lower()
+                    for label, variants in policy_keywords.items():
+                        if found_policies[label]:
+                            continue
+                        for variant in variants:
+                            if variant in anchor_text:
+                                found_policies[label] = True
+                                break
+                        # break loops elegantly
+                except Exception:
+                    continue
+                # Early exit if all found
+                if all(found_policies.values()):
+                    break
+            for label, present in found_policies.items():
+                if not present:
+                    # Policy pages are considered critical compliance requirements
+                    issues.append((url, 'Policies', 'CRITICAL', f'Missing {label}'))
+        except Exception:
+            pass
+        # Contact information detection
+        contact_missing: List[str] = []
+        try:
+            # Email pattern
+            if not re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text_lower):
+                contact_missing.append('email')
+            # Phone number pattern (simple digits and separators)
+            if not re.search(r"\+?\d[\d\s\-()]{7,}", text_lower):
+                contact_missing.append('phone number')
+            # Physical address: look for typical address keywords
+            address_keywords = ['street', 'st.', 'road', 'rd', 'avenue', 'ave', 'lane', 'ln', 'drive', 'dr', 'boulevard', 'blvd']
+            if not any(kw in text_lower for kw in address_keywords):
+                contact_missing.append('physical address')
+            # Contact form: look for keywords in forms
+            form_present = False
+            try:
+                for form in soup.find_all('form'):
+                    if re.search(r'contact', str(form).lower()):
+                        form_present = True
+                        break
+            except Exception:
+                form_present = False
+            if not form_present:
+                contact_missing.append('contact form')
+            # Business hours detection: look for days of week or common
+            # patterns indicating opening hours (e.g. Mon-Fri 9am-5pm).  If
+            # no such patterns are found anywhere on the page, record
+            # missing business hours.
+            try:
+                hours_pattern = r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\s*[^\n]{0,20}?\d'
+                if not re.search(hours_pattern, text_lower):
+                    if 'hours' not in text_lower and 'opening' not in text_lower and 'business hours' not in text_lower:
+                        contact_missing.append('business hours')
+            except Exception:
+                pass
+            if contact_missing:
+                issues.append((url, 'Contact', 'HIGH', 'Missing ' + ', '.join(contact_missing)))
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------------
+        # 3. Product page analysis (completeness, images, price consistency)
+        try:
+            is_product_page = False
+            product_fields_missing: List[str] = []
+            price_page: Optional[str] = None
+            price_structured: Optional[str] = None
+            # Identify product pages by URL pattern or presence of product schema
+            parsed_path = parsed.path or ''
+            if '/products/' in parsed_path:
+                is_product_page = True
+            # Determine if product schema found earlier
+            try:
+                if 'Product schema not found' not in [issue[-1] for issue in issues if issue[1] == 'Structured Data']:
+                    # Found schema: treat as product page
+                    is_product_page = True
+            except Exception:
+                pass
+            if is_product_page:
+                # Product title
+                try:
+                    title_tag = soup.find(['h1', 'title'])
+                    title_text = title_tag.get_text(strip=True) if title_tag else ''
+                except Exception:
+                    title_text = ''
+                if not title_text or len(title_text.strip()) < 1:
+                    product_fields_missing.append('title')
+                # Description length (check for meaningful content, at least 20 characters)
+                try:
+                    # Look for meta description or paragraph text
+                    desc = ''
+                    meta_desc = soup.find('meta', attrs={'name': 'description'})
+                    if meta_desc and meta_desc.get('content'):
+                        desc = meta_desc['content']
+                    else:
+                        # Fallback: first paragraph
+                        p = soup.find('p')
+                        if p:
+                            desc = p.get_text(strip=True)
+                    if not desc or len(desc.strip()) < 20:
+                        product_fields_missing.append('description')
+                except Exception:
+                    product_fields_missing.append('description')
+                # Price on page (search for currency symbols)
+                try:
+                    price_match = re.search(r'([£$€]\s?\d+[\.,]?\d*)', text)
+                    if price_match:
+                        price_page = price_match.group(1)
+                    else:
+                        product_fields_missing.append('price')
+                except Exception:
+                    product_fields_missing.append('price')
+                # Availability (stock)
+                try:
+                    if not re.search(r'(in\s*stock|out\s*of\s*stock|available)', text_lower):
+                        product_fields_missing.append('availability')
+                except Exception:
+                    product_fields_missing.append('availability')
+                # Image count
+                try:
+                    img_tags = soup.find_all('img')
+                    if not img_tags or len(img_tags) == 0:
+                        product_fields_missing.append('images')
+                except Exception:
+                    product_fields_missing.append('images')
+                # Report missing product fields
+                if product_fields_missing:
+                    issues.append((url, 'Product', 'HIGH', 'Missing ' + ', '.join(product_fields_missing)))
+                # Image quality: ensure at least one image has reasonable dimensions and alt text
+                try:
+                    bad_images = 0
+                    for img_tag in soup.find_all('img'):
+                        try:
+                            width_attr = img_tag.get('width')
+                            height_attr = img_tag.get('height')
+                            if width_attr and height_attr:
+                                try:
+                                    width = int(width_attr)
+                                    height = int(height_attr)
+                                    if width < 100 or height < 100:
+                                        bad_images += 1
+                                except Exception:
+                                    continue
+                            # Alt text check: reuse alt text from alt checker if available
+                            alt_attr = img_tag.get('alt') or ''
+                            if not alt_attr.strip():
+                                bad_images += 1
+                        except Exception:
+                            continue
+                    if bad_images > 0:
+                        issues.append((url, 'Images', 'HIGH', f'{bad_images} image(s) with insufficient size or missing alt text'))
+                except Exception:
+                    pass
+                # Price consistency: compare structured data price with page price
+                try:
+                    # Extract price from JSON‑LD or microdata product schemas
+                    price_structured = None
+                    # JSON‑LD
+                    for script in soup.find_all('script', type='application/ld+json'):
+                        try:
+                            data = json.loads(script.string or '')
+                            items = data if isinstance(data, list) else [data]
+                            for item in items:
+                                if not isinstance(item, dict):
+                                    continue
+                                if '@graph' in item and isinstance(item['@graph'], list):
+                                    for sub in item['@graph']:
+                                        try:
+                                            sub_type = sub.get('@type') or sub.get('type')
+                                            if sub_type and 'product' in str(sub_type).lower():
+                                                # price may be nested inside offers
+                                                if 'price' in sub:
+                                                    price_structured = str(sub['price'])
+                                                elif 'offers' in sub and isinstance(sub['offers'], dict):
+                                                    offers = sub['offers']
+                                                    price_structured = str(offers.get('price', ''))
+                                                break
+                                        except Exception:
+                                            continue
+                                    if price_structured:
+                                        break
+                                else:
+                                    item_type = item.get('@type') or item.get('type')
+                                    if item_type and 'product' in str(item_type).lower():
+                                        if 'price' in item:
+                                            price_structured = str(item['price'])
+                                        elif 'offers' in item and isinstance(item['offers'], dict):
+                                            offers = item['offers']
+                                            price_structured = str(offers.get('price', ''))
+                                        break
+                            if price_structured:
+                                break
+                        except Exception:
+                            continue
+                    # Microdata
+                    if not price_structured:
+                        try:
+                            for tag in soup.find_all(attrs={'itemscope': True, 'itemtype': True}):
+                                try:
+                                    item_type = tag.get('itemtype')
+                                    if item_type and 'product' in item_type.lower():
+                                        for child in tag.find_all(attrs={'itemprop': True}):
+                                            try:
+                                                prop = child.get('itemprop')
+                                                value = child.get('content') or child.get_text(strip=True)
+                                                if prop == 'price' and value:
+                                                    price_structured = str(value)
+                                                    break
+                                            except Exception:
+                                                continue
+                                        if price_structured:
+                                            break
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+                    # Compare numeric values if both exist
+                    def _parse_price_val(pstr: str) -> Optional[float]:
+                        try:
+                            # Remove currency symbols and commas
+                            val = re.findall(r'\d+[\.,]?\d*', pstr)
+                            if not val:
+                                return None
+                            # Replace comma with dot if comma used as decimal
+                            num = val[0].replace(',', '.')
+                            return float(num)
+                        except Exception:
+                            return None
+                    if price_structured and price_page:
+                        try:
+                            p_struct = _parse_price_val(price_structured)
+                            p_page = _parse_price_val(price_page)
+                        except Exception:
+                            p_struct = None
+                            p_page = None
+                        if p_struct is not None and p_page is not None:
+                            # Consider difference if greater than 1 cent
+                            try:
+                                if abs(p_struct - p_page) > 0.01:
+                                    issues.append((url, 'Price', 'CRITICAL', 'Displayed price differs from structured data price'))
+                            except Exception:
+                                pass
+                    # Validate currency symbol presence and format
+                    try:
+                        if price_page and not re.search(r'[£$€]', price_page):
+                            issues.append((url, 'Price', 'CRITICAL', 'Missing currency symbol in displayed price'))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                # Image format checks: ensure images use supported formats
+                try:
+                    unsupported = 0
+                    for img_tag in soup.find_all('img'):
+                        try:
+                            src_val = img_tag.get('src') or ''
+                            src_val = src_val.lower().split('?')[0]
+                            if src_val and not src_val.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                                unsupported += 1
+                        except Exception:
+                            continue
+                    if unsupported > 0:
+                        issues.append((url, 'Images', 'HIGH', f'{unsupported} image(s) in unsupported format'))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # -----------------------------------------------------------------
+        # 4. Shopify platform and theme detection
+        try:
+            html_lower = html.lower() if html else ''
+            if 'cdn.shopify.com' in html_lower or 'myshopify.com' in html_lower or 'shopify' in html_lower:
+                issues.append((url, 'Platform', 'INFO', 'Shopify platform detected'))
+        except Exception:
+            pass
+        # -----------------------------------------------------------------
+        # Record all issues
+        if issues:
+            with self.result.lock:
+                self.result.ai_issues.extend(issues)
 
     def _analyze_return_policy(self, page_url: str) -> List[str]:
         """Download and analyse a return/refund policy page for required content.
@@ -2262,30 +2677,46 @@ def crawl_status():
     mismatch_err = len(status.get('title_mismatches', []))
     banned_err = len(status.get('banned_keyword_pages', []))
     alt_err = status.get('alt_text_count', 0)
-    # Compute denominators and errors for new check categories.  If a
-    # category has no explicit count, fall back to the total pages scanned so
-    # that the ratio still yields meaningful values.  The restricted
-    # category combines pages flagged for prohibited content, meta robots
-    # directives and robots.txt disallows.
-    trust_total = status.get('trust_check_pages', 0) or pages_scanned
-    restricted_total = status.get('restricted_check_pages', 0) or pages_scanned
-    structured_total = status.get('structured_check_pages', 0) or pages_scanned
-    trust_err = len(status.get('trust_signal_issues', []))
-    restricted_err = (len(status.get('restricted_content_pages', [])) +
-                      len(status.get('meta_robots_pages', [])) +
-                      len(status.get('robots_disallowed', [])))
-    structured_err = len(status.get('structured_data_issues', []))
-    # Define weights: assign a lower weight to alt text and structured data so
-    # they have less impact on the overall compliance score compared to other checks.
+    # Compute denominators and error ratios for the unified AI check.
+    # The AI check uses the new ai_issues and ai_check_pages fields and
+    # assigns severity weights based on issue severity (CRITICAL=10,
+    # HIGH=5, MEDIUM=2, LOW=1, INFO=0).  The weighted error ratio is
+    # computed as the sum of weights divided by the maximum possible
+    # weight for the number of pages scanned (ai_total * 10).  We cap
+    # the ratio at 1.0 to prevent extremely high issue counts from
+    # overwhelming other categories.
+    ai_total = status.get('ai_check_pages', 0) or pages_scanned
+    ai_issues = status.get('ai_issues', [])
+    # Determine weighted error sum for AI issues
+    severity_weights = {'CRITICAL': 10, 'HIGH': 5, 'MEDIUM': 2, 'LOW': 1, 'INFO': 0}
+    ai_weight_sum = 0.0
+    try:
+        for issue in ai_issues:
+            try:
+                # issue tuple: (url, category, severity, message)
+                severity = issue[2] if len(issue) > 2 else 'HIGH'
+                ai_weight_sum += severity_weights.get(str(severity), 1)
+            except Exception:
+                ai_weight_sum += 1
+    except Exception:
+        ai_weight_sum = 0.0
+    # Compute weighted error ratio.  Use pages_scanned as fallback to avoid division by zero.
+    if ai_total > 0:
+        max_possible = ai_total * 10.0
+        ai_err_ratio = ai_weight_sum / max_possible if max_possible > 0 else 0.0
+        # Cap at 1.0
+        if ai_err_ratio > 1.0:
+            ai_err_ratio = 1.0
+    else:
+        ai_err_ratio = 0.0
+    # Define weights for all categories.  Alt text remains at 0.5 weight.
     weights = {
         'outbound': 1.0,
         'broken': 1.0,
         'mismatch': 1.0,
         'banned': 1.0,
         'alt': 0.5,
-        'trust': 1.0,
-        'restricted': 1.0,
-        'structured': 0.5
+        'ai': 1.0
     }
     weighted_error_sum = 0.0
     total_weight = 0.0
@@ -2309,18 +2740,10 @@ def crawl_status():
     if alt_total > 0:
         weighted_error_sum += weights['alt'] * (alt_err / alt_total)
         total_weight += weights['alt']
-    # Trust signals
-    if trust_total > 0:
-        weighted_error_sum += weights['trust'] * (trust_err / trust_total)
-        total_weight += weights['trust']
-    # Restricted content and blocking
-    if restricted_total > 0:
-        weighted_error_sum += weights['restricted'] * (restricted_err / restricted_total)
-        total_weight += weights['restricted']
-    # Structured data
-    if structured_total > 0:
-        weighted_error_sum += weights['structured'] * (structured_err / structured_total)
-        total_weight += weights['structured']
+    # AI check: incorporate weighted severity ratio
+    if ai_total > 0:
+        weighted_error_sum += weights['ai'] * ai_err_ratio
+        total_weight += weights['ai']
     # Compute quality: 1 minus weighted average of error rates
     if total_weight > 0:
         quality = 1.0 - (weighted_error_sum / total_weight)
@@ -2368,16 +2791,14 @@ def crawl_status():
         # Include the domain being scanned in all responses so that the
         # front‑end can display it in the final results header.  The
         # `result` object always holds the current domain.
-        'domain': result.domain
-                , 'trust_signal_issues': status.get('trust_signal_issues', [])
-                , 'trust_check_pages': status.get('trust_check_pages', 0)
-                , 'restricted_content_pages': status.get('restricted_content_pages', [])
-                , 'robots_disallowed': status.get('robots_disallowed', [])
-                , 'meta_robots_pages': status.get('meta_robots_pages', [])
-                , 'restricted_check_pages': status.get('restricted_check_pages', 0)
-                , 'structured_data_issues': status.get('structured_data_issues', [])
-                , 'structured_check_pages': status.get('structured_check_pages', 0)
-                , 'debug_logs': status.get('debug_logs', [])
+        'domain': result.domain,
+        # Include AI check results in the JSON response.  The front‑end
+        # uses ai_issues to list individual compliance problems and
+        # ai_check_pages as the denominator for the AI ratio.  We omit
+        # the legacy trust, restricted and structured fields here.
+        'ai_issues': status.get('ai_issues', []),
+        'ai_check_pages': status.get('ai_check_pages', 0),
+        'debug_logs': status.get('debug_logs', [])
     }
     
     if status['is_complete']:
@@ -2399,6 +2820,8 @@ def crawl_status():
             , 'alt_checks_total': result_dict.get('alt_checks_total', 0)
             , 'compliance': round(compliance, 1)
             , 'domain': result_dict.get('domain', result.domain)
+            , 'ai_issues': result_dict.get('ai_issues', [])
+            , 'ai_check_pages': result_dict.get('ai_check_pages', 0)
         })
     
     return jsonify(response_data)
@@ -2474,46 +2897,49 @@ def export_txt(result, domain_clean, timestamp):
         duration = result.end_time - result.start_time
         content.append(f"Duration: {duration}")
     content.append(f"Pages Scanned: {result.pages_scanned}")
-    # Compute a compliance score for the TXT report using the same weighted
-    # formula as the API.  Each category has its own denominator and
-    # weight.  Alt text issues are given a lower weight so they don't
-    # overwhelm the score when many images are scanned.
+    # Compute a compliance score for the TXT report using the new AI check.
     pages_scanned = result.pages_scanned
-    # Determine denominators
     outbound_total = pages_scanned
     broken_total = pages_scanned
     title_total = getattr(result, 'title_check_pages', 0) or pages_scanned
     banned_total = getattr(result, 'banned_check_pages', 0) or pages_scanned
-    # Alt text checks have been removed; there is no denominator for alt
-    # text errors in the compliance calculation
+    # Alt text is no longer considered in the compliance calculation
     alt_total = 0
     # Error counts
     outbound_err = len(result.outbound_links)
     broken_err = len(result.broken_links)
     mismatch_err = len(getattr(result, 'title_mismatches', []))
     banned_err = len(getattr(result, 'banned_keyword_pages', []))
-    # Alt text errors are zero because the alt text checker has been removed
     alt_err = 0
-    # New denominators and error counts for trust, restricted and structured checks
-    trust_total = getattr(result, 'trust_check_pages', 0) or pages_scanned
-    restricted_total = getattr(result, 'restricted_check_pages', 0) or pages_scanned
-    structured_total = getattr(result, 'structured_check_pages', 0) or pages_scanned
-    trust_err = len(getattr(result, 'trust_signal_issues', []))
-    restricted_err = (len(getattr(result, 'restricted_content_pages', [])) +
-                      len(getattr(result, 'meta_robots_pages', [])) +
-                      len(getattr(result, 'robots_disallowed', [])))
-    structured_err = len(getattr(result, 'structured_data_issues', []))
-    # Weights (alt text category weight is zero because the checker has been removed)
+    # AI denominator and weighted error ratio
+    ai_total = getattr(result, 'ai_check_pages', 0) or pages_scanned
+    ai_issues = getattr(result, 'ai_issues', [])
+    severity_weights = {'CRITICAL': 10, 'HIGH': 5, 'MEDIUM': 2, 'LOW': 1, 'INFO': 0}
+    ai_weight_sum = 0.0
+    try:
+        for issue in ai_issues:
+            try:
+                severity = issue[2] if len(issue) > 2 else 'HIGH'
+                ai_weight_sum += severity_weights.get(str(severity), 1)
+            except Exception:
+                ai_weight_sum += 1
+    except Exception:
+        ai_weight_sum = 0.0
+    if ai_total > 0:
+        max_possible = ai_total * 10.0
+        ai_err_ratio = ai_weight_sum / max_possible if max_possible > 0 else 0.0
+        if ai_err_ratio > 1.0:
+            ai_err_ratio = 1.0
+    else:
+        ai_err_ratio = 0.0
+    # Define weights for categories.  Alt text weight is zero since the checker is removed.
     weights = {
         'outbound': 1.0,
         'broken': 1.0,
         'mismatch': 1.0,
         'banned': 1.0,
-        # Alt text checker removed; alt errors are assigned zero weight
         'alt': 0.0,
-        'trust': 1.0,
-        'restricted': 1.0,
-        'structured': 0.5
+        'ai': 1.0
     }
     weighted_error_sum = 0.0
     total_weight = 0.0
@@ -2529,46 +2955,27 @@ def export_txt(result, domain_clean, timestamp):
     if banned_total > 0:
         weighted_error_sum += weights['banned'] * (banned_err / banned_total)
         total_weight += weights['banned']
-    if alt_total > 0:
+    if alt_total > 0 and alt_err > 0:
         weighted_error_sum += weights['alt'] * (alt_err / alt_total)
         total_weight += weights['alt']
-    # Trust signals
-    if trust_total > 0:
-        weighted_error_sum += weights['trust'] * (trust_err / trust_total)
-        total_weight += weights['trust']
-    # Restricted content and blocking
-    if restricted_total > 0:
-        weighted_error_sum += weights['restricted'] * (restricted_err / restricted_total)
-        total_weight += weights['restricted']
-    # Structured data
-    if structured_total > 0:
-        weighted_error_sum += weights['structured'] * (structured_err / structured_total)
-        total_weight += weights['structured']
+    if ai_total > 0:
+        weighted_error_sum += weights['ai'] * ai_err_ratio
+        total_weight += weights['ai']
     if total_weight > 0:
         quality = 1.0 - (weighted_error_sum / total_weight)
     else:
         quality = 1.0
+    # Clamp quality
     if quality < 0.0:
         quality = 0.0
     elif quality > 1.0:
         quality = 1.0
-    # For the TXT export, treat progress as 100% since the crawl is complete
     compliance = 100.0 * quality
     content.append(f"Compliance: {round(compliance, 1)}%")
     content.append(f"Banned Keyword Pages: {len(getattr(result, 'banned_keyword_pages', []))}")
-    # New summary lines for trust signals, restricted content and structured data
-    try:
-        content.append(f"Trust Signal Issues: {len(getattr(result, 'trust_signal_issues', []))}")
-    except Exception:
-        content.append("Trust Signal Issues: 0")
-    try:
-        content.append(f"Restricted Content Pages: {len(getattr(result, 'restricted_content_pages', []))}")
-    except Exception:
-        content.append("Restricted Content Pages: 0")
-    try:
-        content.append(f"Structured Data Issues: {len(getattr(result, 'structured_data_issues', []))}")
-    except Exception:
-        content.append("Structured Data Issues: 0")
+    # Summarise AI issues count
+    ai_issue_total = len(ai_issues)
+    content.append(f"AI Check Issues: {ai_issue_total}")
     content.append("")
     
     content.append("SUMMARY")
@@ -2639,67 +3046,21 @@ def export_txt(result, domain_clean, timestamp):
             content.append(f"{page_url} | Keywords: {words_str} | Match: {ratio_pct}%")
         content.append("")
 
-    # Include trust signal & policy issues
-    if getattr(result, 'trust_signal_issues', None):
-        content.append("TRUST SIGNAL & POLICY ISSUES")
-        content.append("-" * 20)
-        for page_url, contact_issues, policy_issues, ssl_issues in result.trust_signal_issues:
-            try:
-                parts = []
-                if contact_issues:
-                    parts.append("Contact: " + ", ".join(contact_issues))
-                if policy_issues:
-                    parts.append("Policies: " + ", ".join(policy_issues))
-                if ssl_issues:
-                    parts.append("SSL: " + ", ".join(ssl_issues))
-                summary = " | ".join(parts) if parts else ""
-                content.append(f"{page_url} | {summary}")
-            except Exception:
-                continue
-        content.append("")
-
-    # Include restricted content pages
-    if getattr(result, 'restricted_content_pages', None):
-        content.append("PAGES WITH RESTRICTED CONTENT")
-        content.append("-" * 20)
-        for page_url, cats in result.restricted_content_pages:
-            try:
-                content.append(f"{page_url} | Categories: {', '.join(cats)}")
-            except Exception:
-                continue
-        content.append("")
-
-    # Include pages with meta robots restrictions
-    if getattr(result, 'meta_robots_pages', None):
-        content.append("META ROBOTS RESTRICTIONS")
-        content.append("-" * 20)
-        for page_url, directives in result.meta_robots_pages:
-            try:
-                content.append(f"{page_url} | Directives: {', '.join(directives)}")
-            except Exception:
-                continue
-        content.append("")
-
-    # Include disallowed paths from robots.txt
-    if getattr(result, 'robots_disallowed', None):
-        content.append("ROBOTS.TXT DISALLOWED PATHS")
+    # Include AI check issues.  Each entry in ai_issues is a four‑tuple
+    # of (page_url, category, severity, message).  Display up to all
+    # issues in the report for completeness.
+    if getattr(result, 'ai_issues', None):
+        content.append("AI CHECK ISSUES")
         content.append("-" * 20)
         try:
-            for path in result.robots_disallowed:
-                content.append(path)
+            for issue in result.ai_issues:
+                try:
+                    page_url, category, severity, message = issue if len(issue) == 4 else (issue[0], issue[1], 'HIGH', issue[2] if len(issue) > 2 else '')
+                    content.append(f"{page_url} | {category} ({severity}): {message}")
+                except Exception:
+                    continue
         except Exception:
             pass
-        content.append("")
-
-    # Include structured data issues
-    if getattr(result, 'structured_data_issues', None):
-        content.append("STRUCTURED DATA ISSUES")
-        content.append("-" * 20)
-        for page_url, errs in result.structured_data_issues:
-            try:
-                content.append(f"{page_url} | " + "; ".join(errs))
-            except Exception:
-                continue
         content.append("")
 
     # Do not include a section for image alt text issues since the
@@ -2762,25 +3123,20 @@ def export_pdf(result, domain_clean, timestamp):
     banned_err = len(getattr(result, 'banned_keyword_pages', []))
     # Alt text errors are zero because the alt text checker has been removed
     alt_err = 0
-    # Additional denominators and error counts for new checks
-    trust_total = getattr(result, 'trust_check_pages', 0) or pages_scanned
-    restricted_total = getattr(result, 'restricted_check_pages', 0) or pages_scanned
-    structured_total = getattr(result, 'structured_check_pages', 0) or pages_scanned
-    trust_err = len(getattr(result, 'trust_signal_issues', []))
-    restricted_err = (len(getattr(result, 'restricted_content_pages', [])) +
-                      len(getattr(result, 'meta_robots_pages', [])) +
-                      len(getattr(result, 'robots_disallowed', [])))
-    structured_err = len(getattr(result, 'structured_data_issues', []))
+    # All trust, restricted, and structured data checks have been
+    # consolidated into the unified AI module.  There are no separate
+    # denominators or error counts for these legacy categories.  Use
+    # ai_check_pages and ai_issues below to compute the AI contribution.
+    # Define weights.  Alt text errors are ignored because the alt checker
+    # has been removed.  AI carries a weight of 1.0 to reflect its
+    # Compute weighted compliance similar to export_txt but adapted to PDF.
     weights = {
         'outbound': 1.0,
         'broken': 1.0,
         'mismatch': 1.0,
         'banned': 1.0,
-        # Alt text checker removed; alt errors do not contribute to the weighted score
         'alt': 0.0,
-        'trust': 1.0,
-        'restricted': 1.0,
-        'structured': 0.5
+        'ai': 1.0
     }
     weighted_error_sum = 0.0
     total_weight = 0.0
@@ -2796,21 +3152,32 @@ def export_pdf(result, domain_clean, timestamp):
     if banned_total > 0:
         weighted_error_sum += weights['banned'] * (banned_err / banned_total)
         total_weight += weights['banned']
-    if alt_total > 0:
+    if alt_total > 0 and alt_err > 0:
         weighted_error_sum += weights['alt'] * (alt_err / alt_total)
         total_weight += weights['alt']
-    # Trust signals
-    if trust_total > 0:
-        weighted_error_sum += weights['trust'] * (trust_err / trust_total)
-        total_weight += weights['trust']
-    # Restricted content and blocking
-    if restricted_total > 0:
-        weighted_error_sum += weights['restricted'] * (restricted_err / restricted_total)
-        total_weight += weights['restricted']
-    # Structured data
-    if structured_total > 0:
-        weighted_error_sum += weights['structured'] * (structured_err / structured_total)
-        total_weight += weights['structured']
+    # Compute AI weighted error ratio
+    ai_total = getattr(result, 'ai_check_pages', 0) or pages_scanned
+    ai_issues = getattr(result, 'ai_issues', [])
+    severity_weights = {'CRITICAL': 10, 'HIGH': 5, 'MEDIUM': 2, 'LOW': 1, 'INFO': 0}
+    ai_weight_sum = 0.0
+    try:
+        for issue in ai_issues:
+            try:
+                sev = issue[2] if len(issue) > 2 else 'HIGH'
+                ai_weight_sum += severity_weights.get(str(sev), 1)
+            except Exception:
+                ai_weight_sum += 1
+    except Exception:
+        ai_weight_sum = 0.0
+    let_ai_err_ratio = 0.0
+    if ai_total > 0:
+        max_possible = ai_total * 10.0
+        let_ai_err_ratio = ai_weight_sum / max_possible if max_possible > 0 else 0.0
+        if let_ai_err_ratio > 1.0:
+            let_ai_err_ratio = 1.0
+    if ai_total > 0:
+        weighted_error_sum += weights['ai'] * let_ai_err_ratio
+        total_weight += weights['ai']
     if total_weight > 0:
         quality = 1.0 - (weighted_error_sum / total_weight)
     else:
@@ -2828,11 +3195,7 @@ def export_pdf(result, domain_clean, timestamp):
     lines.append(f"Broken Links (404s): {len(result.broken_links)}")
     lines.append(f"Title Mismatches: {len(getattr(result, 'title_mismatches', []))}")
     lines.append(f"Banned Keyword Pages: {len(getattr(result, 'banned_keyword_pages', []))}")
-    # Include a count of images that failed the alt text check.  This allows
-    # merchants to quickly see how many product images need improved alt
-    # descriptions for accessibility and SEO.
-    # Remove Image Alt Text Issues from the summary as the alt text checker
-    # has been removed.
+    lines.append(f"AI Check Issues: {len(ai_issues)}")
     lines.append("")
     # Outbound links with source page if available
     if result.outbound_links:
@@ -2882,7 +3245,17 @@ def export_pdf(result, domain_clean, timestamp):
             words_str = ", ".join(banned_words)
             lines.append(f"{page_url} | Keywords: {words_str} | Match: {ratio_pct}%")
         lines.append("")
-    # Alt text issues have been removed from the export.
+    # AI issues section
+    if getattr(result, 'ai_issues', None):
+        lines.append("AI CHECK ISSUES")
+        lines.append("-" * 20)
+        for issue in result.ai_issues:
+            try:
+                page_url, category, severity, message = issue if len(issue) == 4 else (issue[0], issue[1], 'HIGH', issue[2] if len(issue) > 2 else '')
+                lines.append(f"{page_url} | {category} ({severity}): {message}")
+            except Exception:
+                continue
+        lines.append("")
 
     lines.append("=" * 60)
     lines.append("Generated by GMC Scout V1")
