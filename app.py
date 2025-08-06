@@ -467,6 +467,34 @@ class LinkCrawler:
         # included in AI check results when relevant.
         self._robots_disallows: list[str] = []
 
+        # Track whether the site is fully blocked via robots.txt (e.g. a
+        # "Disallow: /" directive).  When true we will report a single
+        # site‑level crawlability issue and suppress per‑page robots
+        # warnings.  The _robots_block_reported flag ensures we only
+        # record the issue once per crawl.
+        self._robots_full_block: bool = False
+        self._robots_block_reported: bool = False
+
+        # Contact page detection flags.  During initialisation we will
+        # attempt to locate a contact page on the site.  The crawler
+        # checks several common paths (e.g. /contact, /pages/contact) via
+        # lightweight HEAD requests.  If none of these exist, a single
+        # AI issue will be recorded after initialisation.  These flags
+        # prevent duplicate checks and ensure the issue is only reported
+        # once.  See `_check_contact_page` below.
+        self._contact_checked: bool = False
+        self._contact_found: bool = False
+        self._contact_recorded: bool = False
+
+        # Product JSON caching for Shopify stores.  To extract product
+        # details such as price and availability from dynamic stores,
+        # we fetch the store's /products.json feed once and cache it in
+        # _products_map.  When analysing product pages we look up the
+        # handle to retrieve structured information.  The flags below
+        # control lazy loading of this feed.  See `_load_shopify_products`.
+        self._products_loaded: bool = False
+        self._products_map: Dict[str, dict] = {}
+
         # Collect per-page check results for consolidated logging.  Each
         # entry in this dict maps a URL to a dictionary of check categories
         # (e.g. 'trust', 'restricted', 'structured') and their pass/fail
@@ -489,7 +517,7 @@ class LinkCrawler:
             }
             resp = requests.get(robots_url, headers=headers, timeout=10)
             if resp.status_code == 200:
-                disallowed = []
+                disallowed: list[str] = []
                 for line in resp.text.splitlines():
                     try:
                         line_stripped = line.strip()
@@ -499,8 +527,13 @@ class LinkCrawler:
                         if len(parts) == 2:
                             key = parts[0].strip().lower()
                             value = parts[1].strip()
-                            if key == 'disallow' and value:
-                                disallowed.append(value)
+                            if key == 'disallow':
+                                # Only record explicit paths; an empty value means allow all.
+                                if value:
+                                    disallowed.append(value)
+                                else:
+                                    # An empty Disallow means allow all; ignore.
+                                    pass
                             elif key == 'sitemap' and value:
                                 # Sitemap directive found
                                 self._has_sitemap = True
@@ -511,6 +544,18 @@ class LinkCrawler:
                         self._robots_disallows = disallowed
                     except Exception:
                         pass
+                    # If the site blocks the root path '/' then mark as full block.
+                    if '/' in disallowed or ' /' in disallowed:
+                        self._robots_full_block = True
+                        # Record a single crawlability issue immediately so the
+                        # site‑level block is reported in the AI results.  Use
+                        # an empty URL to indicate this applies globally.
+                        try:
+                            with self.result.lock:
+                                self.result.ai_issues.append(('', 'Crawlability', 'CRITICAL', 'Site blocked by robots.txt (Disallow: /)'))
+                                self._robots_block_reported = True
+                        except Exception:
+                            pass
                 # If no sitemap directive seen, attempt to check /sitemap.xml
                 if not self._has_sitemap:
                     try:
@@ -522,6 +567,42 @@ class LinkCrawler:
                         pass
         except Exception:
             # Fail silently; robots.txt may be missing or inaccessible
+            pass
+
+        # Immediately perform a lightweight check for a contact page.  This
+        # request uses HEAD to minimise bandwidth and is performed once
+        # during initialisation.  If no contact page is found, a single
+        # issue will be recorded now.  Contact detection does not attempt
+        # to fetch page content; it simply verifies that a URL returns
+        # HTTP 200.  See requirement 3.
+        try:
+            # Only check once
+            if not self._contact_checked:
+                self._contact_checked = True
+                # Build list of potential contact paths
+                contact_paths = [
+                    '/contact', '/contact-us', '/contactus', '/pages/contact',
+                    '/pages/contact-us', '/pages/contactus'
+                ]
+                base_url = f"https://{parsed.netloc}"
+                for cpath in contact_paths:
+                    try:
+                        url_full = f"{base_url}{cpath}"
+                        resp_head = requests.head(url_full, headers=headers, timeout=5, allow_redirects=True)
+                        if resp_head.status_code == 200:
+                            self._contact_found = True
+                            break
+                    except Exception:
+                        continue
+                # If contact page not found, record one issue
+                if not self._contact_found:
+                    try:
+                        with self.result.lock:
+                            self.result.ai_issues.append(('', 'Contact', 'HIGH', 'Missing contact page'))
+                            self._contact_recorded = True
+                    except Exception:
+                        pass
+        except Exception:
             pass
 
         # Maintain a mapping from discovered URLs to the page where they were found.
@@ -585,6 +666,42 @@ class LinkCrawler:
             return True
         except:
             return False
+
+    def _load_shopify_products(self) -> None:
+        """
+        Lazy‑load the store's product catalogue via the `/products.json` feed.
+        Shopify stores often render product details via JavaScript, which
+        causes missing price/availability fields during static scraping.
+        To mitigate this, we fetch the product list once per crawl and
+        cache it in a dictionary keyed by product handle.  If fetching
+        fails or returns no products, the cache remains empty and
+        subsequent lookups will fall back to HTML parsing.
+
+        This helper is idempotent and safe to call multiple times.  It
+        sets `_products_loaded` to True on completion.
+        """
+        if self._products_loaded:
+            return
+        try:
+            # Use the normalized domain for product JSON requests.  The
+            # fetch_shopify_products helper will attempt multiple
+            # endpoints including the myshopify fallback.  If the domain
+            # includes a subdomain, fetch_shopify_products handles it.
+            products = fetch_shopify_products(self.domain)
+            if products:
+                for prod in products:
+                    try:
+                        handle = prod.get('handle')
+                        if handle and handle not in self._products_map:
+                            self._products_map[handle] = prod
+                    except Exception:
+                        continue
+        except Exception:
+            # Ignore errors; leave products map empty
+            pass
+        finally:
+            # Mark as loaded regardless of success to avoid repeated attempts
+            self._products_loaded = True
     
     def crawl_site(self):
         """Main crawl method"""
@@ -1647,17 +1764,12 @@ class LinkCrawler:
             if canonical is None:
                 issues.append((url, 'Crawlability', 'HIGH', 'Missing canonical link'))
             # Check robots.txt disallows
-            try:
-                path = parsed.path or '/'
-                for dis in getattr(self, '_robots_disallows', []):
-                    try:
-                        if dis and path.startswith(dis):
-                            issues.append((url, 'Crawlability', 'CRITICAL', f'Blocked by robots.txt: {dis}'))
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+            # The crawler suppresses per‑page "Blocked by robots.txt" errors.
+            # A site‑wide block (Disallow: /) is recorded during initialisation
+            # in the constructor.  Additional disallow rules are not flagged
+            # on individual pages to avoid overwhelming the report.  See
+            # requirement 1.  Therefore, no per‑page crawlability issues
+            # are added here for robots.txt disallows.
             # If sitemap is not present (determined during initialization) and we
             # haven't recorded this issue yet, report missing XML sitemap once.
             if not self._has_sitemap and not self._sitemap_recorded:
@@ -1770,7 +1882,39 @@ class LinkCrawler:
                     continue
             # Determine missing schemas
             if not found_product:
-                structured_errors.append('Product schema not found')
+                # Only record missing product schema if product JSON does
+                # not provide equivalent information.  Shopify stores
+                # frequently omit product schema from HTML but expose
+                # structured details via the products.json feed.  When
+                # analysing a product page, attempt to load the store's
+                # product catalogue and suppress this error when the
+                # product handle is known.  See requirement 2.
+                try:
+                    parsed_path_tmp = parsed.path or ''
+                    if '/products/' in parsed_path_tmp:
+                        # Lazy‑load product data on first use
+                        if not self._products_loaded:
+                            try:
+                                self._load_shopify_products()
+                            except Exception:
+                                pass
+                        # Extract handle from /products/<handle>
+                        handle_tmp = ''
+                        try:
+                            handle_tmp = parsed_path_tmp.split('/products/')[1].split('/')[0]
+                        except Exception:
+                            handle_tmp = ''
+                        # If this product exists in the JSON feed, skip
+                        # reporting missing schema.  Otherwise record the
+                        # error as before.
+                        if handle_tmp and handle_tmp in self._products_map:
+                            pass
+                        else:
+                            structured_errors.append('Product schema not found')
+                    else:
+                        structured_errors.append('Product schema not found')
+                except Exception:
+                    structured_errors.append('Product schema not found')
             if not found_organization:
                 structured_errors.append('Organization schema not found')
             if not found_breadcrumb:
@@ -1821,45 +1965,10 @@ class LinkCrawler:
                     issues.append((url, 'Policies', 'CRITICAL', f'Missing {label}'))
         except Exception:
             pass
-        # Contact information detection
-        contact_missing: List[str] = []
-        try:
-            # Email pattern
-            if not re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text_lower):
-                contact_missing.append('email')
-            # Phone number pattern (simple digits and separators)
-            if not re.search(r"\+?\d[\d\s\-()]{7,}", text_lower):
-                contact_missing.append('phone number')
-            # Physical address: look for typical address keywords
-            address_keywords = ['street', 'st.', 'road', 'rd', 'avenue', 'ave', 'lane', 'ln', 'drive', 'dr', 'boulevard', 'blvd']
-            if not any(kw in text_lower for kw in address_keywords):
-                contact_missing.append('physical address')
-            # Contact form: look for keywords in forms
-            form_present = False
-            try:
-                for form in soup.find_all('form'):
-                    if re.search(r'contact', str(form).lower()):
-                        form_present = True
-                        break
-            except Exception:
-                form_present = False
-            if not form_present:
-                contact_missing.append('contact form')
-            # Business hours detection: look for days of week or common
-            # patterns indicating opening hours (e.g. Mon-Fri 9am-5pm).  If
-            # no such patterns are found anywhere on the page, record
-            # missing business hours.
-            try:
-                hours_pattern = r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\s*[^\n]{0,20}?\d'
-                if not re.search(hours_pattern, text_lower):
-                    if 'hours' not in text_lower and 'opening' not in text_lower and 'business hours' not in text_lower:
-                        contact_missing.append('business hours')
-            except Exception:
-                pass
-            if contact_missing:
-                issues.append((url, 'Contact', 'HIGH', 'Missing ' + ', '.join(contact_missing)))
-        except Exception:
-            pass
+        # Contact information detection disabled.  Per requirement, the AI
+        # checker should not flag missing contact details on every page.
+        # Instead, a site‑wide check for a contact page is performed during
+        # initialisation.  No per‑page contact issues are recorded here.
 
         # -----------------------------------------------------------------
         # 3. Product page analysis (completeness, images, price consistency)
@@ -1880,6 +1989,26 @@ class LinkCrawler:
             except Exception:
                 pass
             if is_product_page:
+                # Attempt to load Shopify product data and extract details.  If
+                # successful, these values override HTML guesses for price
+                # and availability.  This reduces false positives when
+                # information is rendered via JavaScript or metafields.
+                product_data = None
+                handle_tmp = ''
+                try:
+                    parsed_path_prod = parsed.path or ''
+                    if '/products/' in parsed_path_prod:
+                        # Lazy‑load products.json only once
+                        if not self._products_loaded:
+                            try:
+                                self._load_shopify_products()
+                            except Exception:
+                                pass
+                        # Extract handle from URL path
+                        handle_tmp = parsed_path_prod.split('/products/')[1].split('/')[0]
+                        product_data = self._products_map.get(handle_tmp)
+                except Exception:
+                    product_data = None
                 # Product title
                 try:
                     title_tag = soup.find(['h1', 'title'])
@@ -1890,13 +2019,11 @@ class LinkCrawler:
                     product_fields_missing.append('title')
                 # Description length (check for meaningful content, at least 20 characters)
                 try:
-                    # Look for meta description or paragraph text
                     desc = ''
                     meta_desc = soup.find('meta', attrs={'name': 'description'})
                     if meta_desc and meta_desc.get('content'):
                         desc = meta_desc['content']
                     else:
-                        # Fallback: first paragraph
                         p = soup.find('p')
                         if p:
                             desc = p.get_text(strip=True)
@@ -1904,21 +2031,69 @@ class LinkCrawler:
                         product_fields_missing.append('description')
                 except Exception:
                     product_fields_missing.append('description')
-                # Price on page (search for currency symbols)
+                # Price detection: prefer product JSON over on-page patterns
+                price_from_json: Optional[str] = None
+                if product_data:
+                    try:
+                        variants = product_data.get('variants', [])
+                        if variants:
+                            # Use the first variant's price
+                            price_from_json = str(variants[0].get('price'))
+                            # Also capture availability for later
+                            available_flag = variants[0].get('available')
+                            if isinstance(available_flag, bool) and available_flag:
+                                # Mark availability as present
+                                availability_json = True
+                            else:
+                                # Check inventory quantity if available
+                                qty = variants[0].get('inventory_quantity')
+                                availability_json = bool(qty) and qty > 0
+                        else:
+                            price_from_json = None
+                            availability_json = False
+                    except Exception:
+                        price_from_json = None
+                        availability_json = False
+                else:
+                    availability_json = False
+                # On-page price as fallback
+                price_page = None
                 try:
                     price_match = re.search(r'([£$€]\s?\d+[\.,]?\d*)', text)
                     if price_match:
                         price_page = price_match.group(1)
-                    else:
-                        product_fields_missing.append('price')
                 except Exception:
+                    pass
+                # Determine final price and whether to mark price missing
+                if price_from_json:
+                    # Use JSON price; do not mark as missing
+                    price_final = price_from_json
+                elif price_page:
+                    price_final = price_page
+                else:
                     product_fields_missing.append('price')
-                # Availability (stock)
-                try:
-                    if not re.search(r'(in\s*stock|out\s*of\s*stock|available)', text_lower):
+                    price_final = None
+                # Availability detection: prefer JSON over on-page patterns
+                availability_final = None
+                if product_data:
+                    if availability_json:
+                        availability_final = 'in stock'
+                    else:
+                        # If not available via JSON, fallback to page detection below
+                        pass
+                # Fallback to scanning text for stock keywords if availability not yet determined
+                if availability_final is None:
+                    try:
+                        if re.search(r'(in\s*stock|available)', text_lower):
+                            availability_final = 'in stock'
+                        elif re.search(r'(out\s*of\s*stock)', text_lower):
+                            availability_final = 'out of stock'
+                        else:
+                            product_fields_missing.append('availability')
+                            availability_final = None
+                    except Exception:
                         product_fields_missing.append('availability')
-                except Exception:
-                    product_fields_missing.append('availability')
+                        availability_final = None
                 # Image count
                 try:
                     img_tags = soup.find_all('img')
@@ -1944,7 +2119,6 @@ class LinkCrawler:
                                         bad_images += 1
                                 except Exception:
                                     continue
-                            # Alt text check: reuse alt text from alt checker if available
                             alt_attr = img_tag.get('alt') or ''
                             if not alt_attr.strip():
                                 bad_images += 1
@@ -2029,23 +2203,25 @@ class LinkCrawler:
                             return float(num)
                         except Exception:
                             return None
-                    if price_structured and price_page:
+                    # Compare numeric values if both exist.  Use the final
+                    # resolved price (price_final) instead of price_page.
+                    if price_structured and 'price_final' in locals() and price_final:
                         try:
                             p_struct = _parse_price_val(price_structured)
-                            p_page = _parse_price_val(price_page)
+                            p_final = _parse_price_val(price_final)
                         except Exception:
                             p_struct = None
-                            p_page = None
-                        if p_struct is not None and p_page is not None:
+                            p_final = None
+                        if p_struct is not None and p_final is not None:
                             # Consider difference if greater than 1 cent
                             try:
-                                if abs(p_struct - p_page) > 0.01:
+                                if abs(p_struct - p_final) > 0.01:
                                     issues.append((url, 'Price', 'CRITICAL', 'Displayed price differs from structured data price'))
                             except Exception:
                                 pass
-                    # Validate currency symbol presence and format
+                    # Validate currency symbol presence and format using price_final
                     try:
-                        if price_page and not re.search(r'[£$€]', price_page):
+                        if 'price_final' in locals() and price_final and not re.search(r'[£$€]', price_final):
                             issues.append((url, 'Price', 'CRITICAL', 'Missing currency symbol in displayed price'))
                     except Exception:
                         pass
