@@ -1885,7 +1885,16 @@ def download_debug_log():
     # retrieve it from Redis or return an error.
     result = crawl_sessions.get(session_id)
     if not result:
-        return jsonify({'error': 'session not found'}), 404
+        # Attempt to load from Redis if available
+        try:
+            data = redis_client.get(session_id)
+            if data:
+                res_dict = pickle.loads(data)
+                result = CrawlResult.from_dict(res_dict)
+        except Exception:
+            result = None
+        if not result:
+            return jsonify({'error': 'session not found'}), 404
     # Join logs with newline.  If no logs, return a message.
     log_lines = result.debug_logs or ['No debug logs recorded.']
     log_text = '\n'.join(log_lines)
