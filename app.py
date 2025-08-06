@@ -1896,7 +1896,11 @@ def download_debug_log():
         if not result:
             return jsonify({'error': 'session not found'}), 404
     # Join logs with newline.  If no logs, return a message.
-    log_lines = result.debug_logs or ['No debug logs recorded.']
+    # Handle both CrawlResult instances and raw dicts loaded from Redis
+    if isinstance(result, dict):
+        log_lines = result.get('debug_logs') or ['No debug logs recorded.']
+    else:
+        log_lines = getattr(result, 'debug_logs', None) or ['No debug logs recorded.']
     log_text = '\n'.join(log_lines)
     file_bytes = io.BytesIO(log_text.encode('utf-8'))
     # Reset pointer to the beginning so send_file can read from start
