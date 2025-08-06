@@ -1825,157 +1825,15 @@ class LinkCrawler:
             pass
 
         # -----------------------------------------------------------------
-        # 2.1 Structured data detection
-        # Detect Product schema and other recommended schema types.  Validate
-        # required Product fields and report missing schemas.  We record
-        # missing or invalid fields as HIGH severity issues.
-        try:
-            found_product = False
-            found_organization = False
-            found_breadcrumb = False
-            found_review = False
-            structured_errors: List[str] = []
-            # JSON-LD detection
-            for script in soup.find_all('script', type='application/ld+json'):
-                try:
-                    json_text = script.string or ''
-                    data = json.loads(json_text)
-                    items = data if isinstance(data, list) else [data]
-                    # Iterate over each item detected in JSON‑LD.  This loop was
-                    # previously mis‑indented outside of the try block which caused
-                    # a syntax error.
-                    for item in items:
-                        # Skip non‑dict items
-                        if not isinstance(item, dict):
-                            continue
-                        # If item contains @graph, iterate through graph elements
-                        if '@graph' in item and isinstance(item['@graph'], list):
-                            for sub in item['@graph']:
-                                try:
-                                    sub_type = sub.get('@type') or sub.get('type')
-                                    if not sub_type:
-                                        continue
-                                    sub_type_str = str(sub_type).lower()
-                                    if 'product' in sub_type_str:
-                                        found_product = True
-                                        # Only the product name is required for structured data now.
-                                        missing = []
-                                        for field in ['name']:
-                                            if field not in sub or not sub[field]:
-                                                missing.append(field)
-                                        if missing:
-                                            structured_errors.append('missing ' + ', '.join(missing))
-                                    if 'organization' in sub_type_str:
-                                        found_organization = True
-                                    if 'breadcrumblist' in sub_type_str:
-                                        found_breadcrumb = True
-                                    if 'review' in sub_type_str or 'rating' in sub_type_str:
-                                        found_review = True
-                                except Exception:
-                                    continue
-                            # Continue to next item if @graph is processed
-                            continue
-                        # Otherwise handle direct item
-                        item_type = item.get('@type') or item.get('type')
-                        if not item_type:
-                            continue
-                        item_type_str = str(item_type).lower()
-                        if 'product' in item_type_str:
-                            found_product = True
-                            # Only require the product name in structured data.
-                            missing = []
-                            for field in ['name']:
-                                if field not in item or not item[field]:
-                                    missing.append(field)
-                            if missing:
-                                structured_errors.append('missing ' + ', '.join(missing))
-                        if 'organization' in item_type_str:
-                            # We no longer treat missing organization schema as an error.
-                            found_organization = True
-                        if 'breadcrumblist' in item_type_str:
-                            found_breadcrumb = True
-                        if 'review' in item_type_str or 'rating' in item_type_str:
-                            # We no longer treat missing review/rating schema as an error.
-                            found_review = True
-                except Exception:
-                    continue
-            # Microdata detection
-            for tag in soup.find_all(attrs={'itemscope': True, 'itemtype': True}):
-                try:
-                    item_type = tag.get('itemtype')
-                    if not item_type:
-                        continue
-                    item_type_str = str(item_type).lower()
-                    if 'product' in item_type_str:
-                        found_product = True
-                        data_vals = {}
-                        for child in tag.find_all(attrs={'itemprop': True}):
-                            try:
-                                prop = child.get('itemprop')
-                                value = child.get('content') or child.get_text(strip=True)
-                                if prop and value:
-                                    data_vals[prop] = value
-                            except Exception:
-                                continue
-                        missing = []
-                        for field in ['name']:
-                            if field not in data_vals or not data_vals[field]:
-                                missing.append(field)
-                        if missing:
-                            structured_errors.append('missing ' + ', '.join(missing))
-                    if 'organization' in item_type_str:
-                        # Do not flag missing organization schema
-                        found_organization = True
-                    if 'breadcrumblist' in item_type_str:
-                        found_breadcrumb = True
-                    if 'review' in item_type_str or 'rating' in item_type_str:
-                        # Do not flag missing review/rating schema
-                        found_review = True
-                except Exception:
-                    continue
-            # Determine missing schemas
-            if not found_product:
-                # Only record missing product schema if product JSON does
-                # not provide equivalent information.  Shopify stores
-                # frequently omit product schema from HTML but expose
-                # structured details via the products.json feed.  When
-                # analysing a product page, attempt to load the store's
-                # product catalogue and suppress this error when the
-                # product handle is known.  See requirement 2.
-                try:
-                    parsed_path_tmp = parsed.path or ''
-                    if '/products/' in parsed_path_tmp:
-                        # Lazy‑load product data on first use
-                        if not self._products_loaded:
-                            try:
-                                self._load_shopify_products()
-                            except Exception:
-                                pass
-                        # Extract handle from /products/<handle>
-                        handle_tmp = ''
-                        try:
-                            handle_tmp = parsed_path_tmp.split('/products/')[1].split('/')[0]
-                        except Exception:
-                            handle_tmp = ''
-                        # If this product exists in the JSON feed, skip
-                        # reporting missing schema.  Otherwise record the
-                        # error as before.
-                        if handle_tmp and handle_tmp in self._products_map:
-                            pass
-                        else:
-                            structured_errors.append('Product schema not found')
-                    else:
-                        structured_errors.append('Product schema not found')
-                except Exception:
-                    structured_errors.append('Product schema not found')
-            # Only require a breadcrumb list for better navigation.  Missing
-            # organization or review/rating schemas are not flagged as errors.
-            if not found_breadcrumb:
-                structured_errors.append('BreadcrumbList schema not found')
-            if structured_errors:
-                issues.append((url, 'Structured Data', 'HIGH', '; '.join(structured_errors)))
-        except Exception:
-            pass
+        # 2.1 Structured data detection (removed)
+        #
+        # Previously, this section detected and validated schema.org
+        # structured data such as Product, Organization, BreadcrumbList and
+        # Review/Rating schemas.  It parsed JSON‑LD and microdata in the
+        # HTML, checked for missing fields, and recorded errors.  Per updated
+        # requirements, the GMC Scout tool no longer performs any structured
+        # data validation.  This entire block has been removed to avoid
+        # flagging pages for missing structured data.
 
         # -----------------------------------------------------------------
         # 2.2 Policy pages detection & 2.3 Contact information
@@ -2033,12 +1891,11 @@ class LinkCrawler:
             if '/products/' in parsed_path:
                 is_product_page = True
             # Determine if product schema found earlier
-            try:
-                if 'Product schema not found' not in [issue[-1] for issue in issues if issue[1] == 'Structured Data']:
-                    # Found schema: treat as product page
-                    is_product_page = True
-            except Exception:
-                pass
+            # Previously this logic treated pages with valid Product schema as
+            # product pages.  Since structured data validation has been
+            # removed entirely, we no longer adjust is_product_page based on
+            # schema detection.  Product pages are recognised solely by the
+            # '/products/' URL pattern.
             if is_product_page:
                 # Attempt to load Shopify product data and extract details.  If
                 # successful, these values override HTML guesses for price
