@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Terry Ecom Link Checker - Quick Deployment Script
+# GMC Scout V1 - Quick Deployment Script
 # This script helps you deploy the application quickly
 
-echo "🚀 Terry Ecom Link Checker - Deployment Script"
+echo "🚀 GMC Scout V1 - Deployment Script"
 echo "================================================"
 
 # Check if we're in the right directory
@@ -67,7 +67,7 @@ if [ ! -d ".git" ]; then
     echo "🔄 Initializing Git repository..."
     git init
     git add .
-    git commit -m "Initial commit - Terry Ecom Link Checker"
+    git commit -m "Initial commit - GMC Scout V1"
 else
     echo "✅ Git repository already exists"
 fi
@@ -103,6 +103,6 @@ echo ""
 echo "4. Optional: Configure email settings in .env for feedback functionality"
 echo ""
 echo "🌐 Local URL: http://localhost:5000"
-echo "📧 Support: terry@terryecom.com"
+echo "📧 Support: support@gmcscout.com"
 echo ""
 echo "Happy link checking! 🔗✨"

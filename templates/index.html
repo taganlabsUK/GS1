@@ -182,11 +182,7 @@
                         <div id="ai-count" class="text-2xl font-bold">0</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">AI Check Issues</div>
                     </div>
-                    <!-- Debug log container (hidden until logs are available) -->
-                </div>
-                <div id="debug-log-container" class="hidden mt-4">
-                    <h4 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Debug Log</h4>
-                    <pre id="debug-log" class="bg-gray-100 dark:bg-gray-800 p-2 rounded overflow-y-auto h-40 text-xs font-mono"></pre>
+                    <!-- End of progress tiles -->
                 </div>
                 
                 <!-- The live URL display has been removed.  Previously this section
@@ -288,6 +284,11 @@
                         <div id="final-alt" class="text-2xl font-bold">-</div>
                         <div class="text-sm text-gray-600 dark:text-gray-400">Alt Text Issues</div>
                     </div>
+                    <!-- Page speed summary -->
+                    <div id="pagespeed-card" class="rounded-lg p-4">
+                        <div id="final-pagespeed" class="text-2xl font-bold">-</div>
+                        <div class="text-sm text-gray-600 dark:text-gray-400">Page Speed</div>
+                    </div>
                 <!-- AI check summary -->
                 <div id="ai-card" class="rounded-lg p-4">
                     <div id="final-ai" class="text-2xl font-bold">-</div>
@@ -302,10 +303,7 @@
                     </button>
                 </div>
 
-                <!-- Download debug log link (shown after crawl) -->
-                <div class="text-center mt-4">
-                    <a id="download-log-link" href="#" class="text-sm text-blue-600 dark:text-blue-400 underline hidden">Download Debug Log</a>
-                </div>
+                <!-- Download debug log link removed -->
             </div>
 
             <!-- Outbound Links -->
@@ -455,6 +453,10 @@ const finalAlt = document.getElementById('final-alt');
 // Final count for AI check
 const finalAi = document.getElementById('final-ai');
 
+// Page speed elements
+const finalPagespeed = document.getElementById('final-pagespeed');
+const pagespeedCard = document.getElementById('pagespeed-card');
+
 // List container for alt text issues and section reference
 const altList = document.getElementById('alt-list');
 const altSection = document.getElementById('alt-section');
@@ -463,11 +465,7 @@ const altSection = document.getElementById('alt-section');
 const aiSection = document.getElementById('ai-section');
 const aiList = document.getElementById('ai-list');
 
-// Debug log elements
-const debugLog = document.getElementById('debug-log');
-const debugLogContainer = document.getElementById('debug-log-container');
-const downloadLogLink = document.getElementById('download-log-link');
-let lastLogIndex = 0;
+// Debug log elements removed
 
 // Mismatch elements for displaying product title vs URL slug mismatches
 // When mismatches are present, the mismatch section will be shown and
@@ -1289,17 +1287,7 @@ function updateProgress(data) {
         updateAiSection(data);
         // Update compliance progress circle
         updateCompliance(data.compliance || 0, 'progress');
-        // Append debug logs to the log window
-        if (data.debug_logs && Array.isArray(data.debug_logs) && debugLog) {
-            for (let i = lastLogIndex; i < data.debug_logs.length; i++) {
-                try {
-                    const line = data.debug_logs[i];
-                    debugLog.textContent += line + '\n';
-                } catch (e) {}
-            }
-            lastLogIndex = data.debug_logs.length;
-            if (debugLogContainer) debugLogContainer.classList.remove('hidden');
-        }
+        // Debug logs removed
     } catch (e) {
         console.error('Mismatch section update failed:', e);
     }
@@ -1423,13 +1411,42 @@ function showResults(data) {
     applyCardStyles(altCard, finalAlt, altFinal);
     applyCardStyles(aiCard, finalAi, aiFinalCount);
 
-    // Set download log link
-    try {
-        if (typeof downloadLogLink !== 'undefined' && currentSessionId) {
-            downloadLogLink.href = `/debug_log?session_id=${currentSessionId}`;
-            downloadLogLink.classList.remove('hidden');
+    // Display page speed metrics and style card
+    if (typeof finalPagespeed !== 'undefined') {
+        const psData = data.pagespeed;
+        if (psData) {
+            const loadTime = (typeof psData.load_time === 'number') ? psData.load_time.toFixed(2) : psData.load_time;
+            const sizeKB = (typeof psData.size_bytes === 'number') ? (psData.size_bytes / 1024).toFixed(1) : '';
+            const reqs = (typeof psData.requests === 'number') ? psData.requests : '';
+            finalPagespeed.textContent = `${loadTime}s, ${sizeKB} KB, ${reqs} req`;
+        } else {
+            finalPagespeed.textContent = '-';
         }
-    } catch (e) {}
+        if (typeof pagespeedCard !== 'undefined') {
+            const baseCardClasses = 'rounded-lg p-4';
+            const baseNumberClasses = 'text-2xl font-bold';
+            if (!psData) {
+                pagespeedCard.className = baseCardClasses + ' bg-gray-50 dark:bg-gray-900/20';
+                finalPagespeed.className = baseNumberClasses + ' text-gray-600';
+            } else {
+                const load = psData.load_time || 0;
+                const req = psData.requests || 0;
+                const size = psData.size_bytes || 0;
+                if (load <= 2 && req <= 50 && size <= 500000) {
+                    pagespeedCard.className = baseCardClasses + ' bg-green-50 dark:bg-green-900/20';
+                    finalPagespeed.className = baseNumberClasses + ' text-green-600';
+                } else if (load <= 4 && req <= 100 && size <= 1000000) {
+                    pagespeedCard.className = baseCardClasses + ' bg-yellow-50 dark:bg-yellow-900/20';
+                    finalPagespeed.className = baseNumberClasses + ' text-yellow-600';
+                } else {
+                    pagespeedCard.className = baseCardClasses + ' bg-red-50 dark:bg-red-900/20';
+                    finalPagespeed.className = baseNumberClasses + ' text-red-600';
+                }
+            }
+        }
+    }
+
+    // Debug log link removed
 
     // Populate the AI issues list.  We no longer show the separate trust,
     // restricted, or structured sections in the final results; instead we
@@ -1744,11 +1761,11 @@ function resetAll() {
     // Reset new counts for AI check
     if (typeof aiCount !== 'undefined') aiCount.textContent = '0';
 
-    // Reset debug log
-    if (typeof debugLog !== 'undefined') debugLog.textContent = '';
-    lastLogIndex = 0;
-    if (typeof debugLogContainer !== 'undefined') debugLogContainer.classList.add('hidden');
-    if (typeof downloadLogLink !== 'undefined') downloadLogLink.classList.add('hidden');
+    // Debug log reset removed
+
+    // Reset page speed card
+    if (typeof finalPagespeed !== 'undefined') finalPagespeed.textContent = '-';
+    if (typeof pagespeedCard !== 'undefined') pagespeedCard.className = 'rounded-lg p-4';
 
     // Reset AI section
     if (typeof aiSection !== 'undefined') aiSection.classList.add('hidden');
@@ -1819,7 +1836,7 @@ urlInput.addEventListener('input', (e) => {
     }
 });
 
-// Initialize
-console.log('Link Checker initialized');
+// Initialize the GMC Scout application
+console.log('GMC Scout initialized');
 </script>
 {% endblock %}

@@ -207,7 +207,7 @@ SMTP_SERVER = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
 SMTP_USERNAME = os.environ.get('SMTP_USERNAME')
 SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD')
-FEEDBACK_EMAIL = os.environ.get('FEEDBACK_EMAIL', 'terry@terryecom.com')
+FEEDBACK_EMAIL = os.environ.get('FEEDBACK_EMAIL', 'support@gmcscout.com')
 
 # Configure Redis for shared state and Celery broker
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
@@ -303,6 +303,22 @@ class CrawlResult:
         # Shopify products JSON feed.  The UI uses this value as the
         # denominator when displaying the ratio of issues/images scanned.
         self.alt_checks_total = 0
+
+        # -----------------------------------------------------------------
+        # Page speed metrics
+        #
+        # Performance checks (load time, HTML size and number of requests)
+        # were previously included as part of the unified AI compliance
+        # module.  In practice we only need to measure the performance of
+        # the homepage.  To support this, we store a dictionary of
+        # metrics here once the first page in the crawl has been
+        # processed.  The dictionary contains:
+        #   load_time  : float (seconds)
+        #   size_bytes : int   (size of the HTML in bytes)
+        #   requests   : int   (approximate number of external resource requests)
+        #
+        # If no page speed check has been recorded, this attribute is None.
+        self.pagespeed: Optional[dict] = None
     
     def update_current_url(self, url):
         """Thread-safe update of current URL"""
@@ -342,6 +358,7 @@ class CrawlResult:
                 , 'debug_logs': list(self.debug_logs)
                 , 'ai_issues': list(self.ai_issues)
                 , 'ai_check_pages': self.ai_check_pages
+                , 'pagespeed': self.pagespeed
             }
     
     def to_dict(self):
@@ -380,6 +397,7 @@ class CrawlResult:
             , 'debug_logs': list(self.debug_logs)
             , 'ai_issues': list(self.ai_issues)
             , 'ai_check_pages': self.ai_check_pages
+            , 'pagespeed': self.pagespeed
             }
 
     def save_to_redis(self):
@@ -431,6 +449,7 @@ class CrawlResult:
         result.debug_logs = data.get('debug_logs', [])
         result.ai_issues = data.get('ai_issues', [])
         result.ai_check_pages = data.get('ai_check_pages', 0)
+        result.pagespeed = data.get('pagespeed')
         return result
 
 class LinkCrawler:
@@ -741,7 +760,7 @@ class LinkCrawler:
             # Create session for connection pooling
             req_session = requests.Session()
             req_session.headers.update({
-                'User-Agent': 'TerryEcomLinkChecker/1.0 (+https://terryecom.com/)',
+                'User-Agent': 'GMCScoutV1/1.0 (+https://gmcscout.com/)',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
                 'Accept-Encoding': 'gzip, deflate',
@@ -877,7 +896,53 @@ class LinkCrawler:
             # Parse HTML
             soup = BeautifulSoup(response.text, "html.parser")
             self.visited.add(url)
-            
+
+            # -----------------------------------------------------------------
+            # Page speed measurement
+            #
+            # Record performance metrics for the very first page crawled.
+            # This serves as a standalone page speed check (homepage
+            # performance) separate from the AI module.  We measure
+            # page load time (already computed), the size of the HTML
+            # response, and the approximate number of resource requests
+            # (images, scripts and link tags).  These metrics are stored
+            # on the CrawlResult.pagespeed attribute if not already set.
+            try:
+                if self.result.pagespeed is None:
+                    # Compute size of HTML
+                    size_bytes = 0
+                    try:
+                        size_bytes = len(response.text) if response.text else 0
+                    except Exception:
+                        size_bytes = 0
+                    # Count resource requests
+                    req_count = 0
+                    try:
+                        for el in soup.find_all():
+                            try:
+                                if el.name == 'img' and el.get('src'):
+                                    req_count += 1
+                                elif el.name == 'script' and el.get('src'):
+                                    req_count += 1
+                                elif el.name == 'link' and el.get('href'):
+                                    # Exclude canonical and alternate links from count
+                                    rel = el.get('rel')
+                                    if not rel or not any(r.lower() in ['canonical', 'alternate'] for r in rel):
+                                        req_count += 1
+                            except Exception:
+                                continue
+                    except Exception:
+                        req_count = 0
+                    with self.result.lock:
+                        self.result.pagespeed = {
+                            'load_time': load_time,
+                            'size_bytes': size_bytes,
+                            'requests': req_count
+                        }
+            except Exception:
+                # Fail silently if page speed metrics cannot be recorded
+                pass
+
             with self.result.lock:
                 self.result.pages_scanned += 1
 
@@ -1443,14 +1508,11 @@ class LinkCrawler:
                         has_price = True
                 except Exception:
                     pass
-                if not has_price:
-                    policy_issues.append('product page missing price')
+                # We no longer flag missing price or availability on product pages.
+                # Only the absence of purchase-related keywords remains a trust signal issue.
                 # Check for purchase button keywords
                 if not any(keyword in text_lower for keyword in ['add to cart', 'add to basket', 'buy now', 'add-to-cart']):
                     policy_issues.append('product page missing purchase button')
-                # Check for availability information (in stock / out of stock)
-                if not any(keyword in text_lower for keyword in ['in stock', 'out of stock', 'available']):
-                    policy_issues.append('product availability not specified')
         except Exception:
             pass
         # Summarise results and store for consolidated logging
@@ -1691,38 +1753,19 @@ class LinkCrawler:
 
         # -----------------------------------------------------------------
         # 1.2 Page performance metrics
-        # Assess page load time, total HTML size and number of resource requests.
+        #
+        # Page performance is now captured via the separate pagespeed check
+        # implemented in the crawler.  The AI module no longer records
+        # performance issues on every page.  We still compute the size
+        # and request counts here for potential future use, but we do
+        # not append any 'Performance' issues to the AI results.
         try:
-            page_size_bytes = len(html) if html else 0
-        except Exception:
-            page_size_bytes = 0
-        # Count number of external resource references (approximate HTTP requests)
-        req_count = 0
-        try:
-            for el in soup.find_all():
-                try:
-                    if el.name == 'img' and el.get('src'):
-                        req_count += 1
-                    elif el.name == 'script' and el.get('src'):
-                        req_count += 1
-                    elif el.name == 'link' and el.get('href'):
-                        # Exclude canonical and alternate links from count
-                        rel = el.get('rel')
-                        if not rel or not any(r.lower() in ['canonical', 'alternate'] for r in rel):
-                            req_count += 1
-                except Exception:
-                    continue
+            _ = len(html) if html else 0
         except Exception:
             pass
-        # Define simple performance thresholds.  High severity when the page is
-        # very slow or heavy, medium for moderate issues.
         try:
-            # Convert bytes to kilobytes for messages
-            size_kb = page_size_bytes / 1024.0
-            if load_time and (load_time > 5 or page_size_bytes > 5 * 1024 * 1024 or req_count > 100):
-                issues.append((url, 'Performance', 'HIGH', f'Poor performance (load {load_time:.2f}s, size {size_kb:.1f} KB, requests {req_count})'))
-            elif load_time and (load_time > 3 or page_size_bytes > 2 * 1024 * 1024 or req_count > 60):
-                issues.append((url, 'Performance', 'MEDIUM', f'Moderate performance issues (load {load_time:.2f}s, size {size_kb:.1f} KB, requests {req_count})'))
+            for _el in soup.find_all():
+                pass
         except Exception:
             pass
 
@@ -1798,7 +1841,11 @@ class LinkCrawler:
                     json_text = script.string or ''
                     data = json.loads(json_text)
                     items = data if isinstance(data, list) else [data]
+                    # Iterate over each item detected in JSON‑LD.  This loop was
+                    # previously mis‑indented outside of the try block which caused
+                    # a syntax error.
                     for item in items:
+                        # Skip non‑dict items
                         if not isinstance(item, dict):
                             continue
                         # If item contains @graph, iterate through graph elements
@@ -1811,9 +1858,9 @@ class LinkCrawler:
                                     sub_type_str = str(sub_type).lower()
                                     if 'product' in sub_type_str:
                                         found_product = True
-                                        # Validate required Product fields
+                                        # Only the product name is required for structured data now.
                                         missing = []
-                                        for field in ['name', 'image', 'price', 'availability']:
+                                        for field in ['name']:
                                             if field not in sub or not sub[field]:
                                                 missing.append(field)
                                         if missing:
@@ -1826,6 +1873,7 @@ class LinkCrawler:
                                         found_review = True
                                 except Exception:
                                     continue
+                            # Continue to next item if @graph is processed
                             continue
                         # Otherwise handle direct item
                         item_type = item.get('@type') or item.get('type')
@@ -1834,17 +1882,20 @@ class LinkCrawler:
                         item_type_str = str(item_type).lower()
                         if 'product' in item_type_str:
                             found_product = True
+                            # Only require the product name in structured data.
                             missing = []
-                            for field in ['name', 'image', 'price', 'availability']:
+                            for field in ['name']:
                                 if field not in item or not item[field]:
                                     missing.append(field)
                             if missing:
                                 structured_errors.append('missing ' + ', '.join(missing))
                         if 'organization' in item_type_str:
+                            # We no longer treat missing organization schema as an error.
                             found_organization = True
                         if 'breadcrumblist' in item_type_str:
                             found_breadcrumb = True
                         if 'review' in item_type_str or 'rating' in item_type_str:
+                            # We no longer treat missing review/rating schema as an error.
                             found_review = True
                 except Exception:
                     continue
@@ -1867,16 +1918,18 @@ class LinkCrawler:
                             except Exception:
                                 continue
                         missing = []
-                        for field in ['name', 'image', 'price', 'availability']:
+                        for field in ['name']:
                             if field not in data_vals or not data_vals[field]:
                                 missing.append(field)
                         if missing:
                             structured_errors.append('missing ' + ', '.join(missing))
                     if 'organization' in item_type_str:
+                        # Do not flag missing organization schema
                         found_organization = True
                     if 'breadcrumblist' in item_type_str:
                         found_breadcrumb = True
                     if 'review' in item_type_str or 'rating' in item_type_str:
+                        # Do not flag missing review/rating schema
                         found_review = True
                 except Exception:
                     continue
@@ -1915,12 +1968,10 @@ class LinkCrawler:
                         structured_errors.append('Product schema not found')
                 except Exception:
                     structured_errors.append('Product schema not found')
-            if not found_organization:
-                structured_errors.append('Organization schema not found')
+            # Only require a breadcrumb list for better navigation.  Missing
+            # organization or review/rating schemas are not flagged as errors.
             if not found_breadcrumb:
                 structured_errors.append('BreadcrumbList schema not found')
-            if not found_review:
-                structured_errors.append('Review/Rating schema not found')
             if structured_errors:
                 issues.append((url, 'Structured Data', 'HIGH', '; '.join(structured_errors)))
         except Exception:
@@ -2031,69 +2082,14 @@ class LinkCrawler:
                         product_fields_missing.append('description')
                 except Exception:
                     product_fields_missing.append('description')
-                # Price detection: prefer product JSON over on-page patterns
-                price_from_json: Optional[str] = None
-                if product_data:
-                    try:
-                        variants = product_data.get('variants', [])
-                        if variants:
-                            # Use the first variant's price
-                            price_from_json = str(variants[0].get('price'))
-                            # Also capture availability for later
-                            available_flag = variants[0].get('available')
-                            if isinstance(available_flag, bool) and available_flag:
-                                # Mark availability as present
-                                availability_json = True
-                            else:
-                                # Check inventory quantity if available
-                                qty = variants[0].get('inventory_quantity')
-                                availability_json = bool(qty) and qty > 0
-                        else:
-                            price_from_json = None
-                            availability_json = False
-                    except Exception:
-                        price_from_json = None
-                        availability_json = False
-                else:
-                    availability_json = False
-                # On-page price as fallback
-                price_page = None
-                try:
-                    price_match = re.search(r'([£$€]\s?\d+[\.,]?\d*)', text)
-                    if price_match:
-                        price_page = price_match.group(1)
-                except Exception:
-                    pass
-                # Determine final price and whether to mark price missing
-                if price_from_json:
-                    # Use JSON price; do not mark as missing
-                    price_final = price_from_json
-                elif price_page:
-                    price_final = price_page
-                else:
-                    product_fields_missing.append('price')
-                    price_final = None
-                # Availability detection: prefer JSON over on-page patterns
-                availability_final = None
-                if product_data:
-                    if availability_json:
-                        availability_final = 'in stock'
-                    else:
-                        # If not available via JSON, fallback to page detection below
-                        pass
-                # Fallback to scanning text for stock keywords if availability not yet determined
-                if availability_final is None:
-                    try:
-                        if re.search(r'(in\s*stock|available)', text_lower):
-                            availability_final = 'in stock'
-                        elif re.search(r'(out\s*of\s*stock)', text_lower):
-                            availability_final = 'out of stock'
-                        else:
-                            product_fields_missing.append('availability')
-                            availability_final = None
-                    except Exception:
-                        product_fields_missing.append('availability')
-                        availability_final = None
+                # We intentionally skip price and availability detection for
+                # product pages.  The unified AI module previously
+                # attempted to extract price and availability from both
+                # structured data and the page text.  Per updated
+                # requirements, these checks are no longer performed,
+                # so no price or availability fields are added to
+                # product_fields_missing.  The variables price_final and
+                # availability_final are omitted entirely.
                 # Image count
                 try:
                     img_tags = soup.find_all('img')
@@ -2128,105 +2124,7 @@ class LinkCrawler:
                         issues.append((url, 'Images', 'HIGH', f'{bad_images} image(s) with insufficient size or missing alt text'))
                 except Exception:
                     pass
-                # Price consistency: compare structured data price with page price
-                try:
-                    # Extract price from JSON‑LD or microdata product schemas
-                    price_structured = None
-                    # JSON‑LD
-                    for script in soup.find_all('script', type='application/ld+json'):
-                        try:
-                            data = json.loads(script.string or '')
-                            items = data if isinstance(data, list) else [data]
-                            for item in items:
-                                if not isinstance(item, dict):
-                                    continue
-                                if '@graph' in item and isinstance(item['@graph'], list):
-                                    for sub in item['@graph']:
-                                        try:
-                                            sub_type = sub.get('@type') or sub.get('type')
-                                            if sub_type and 'product' in str(sub_type).lower():
-                                                # price may be nested inside offers
-                                                if 'price' in sub:
-                                                    price_structured = str(sub['price'])
-                                                elif 'offers' in sub and isinstance(sub['offers'], dict):
-                                                    offers = sub['offers']
-                                                    price_structured = str(offers.get('price', ''))
-                                                break
-                                        except Exception:
-                                            continue
-                                    if price_structured:
-                                        break
-                                else:
-                                    item_type = item.get('@type') or item.get('type')
-                                    if item_type and 'product' in str(item_type).lower():
-                                        if 'price' in item:
-                                            price_structured = str(item['price'])
-                                        elif 'offers' in item and isinstance(item['offers'], dict):
-                                            offers = item['offers']
-                                            price_structured = str(offers.get('price', ''))
-                                        break
-                            if price_structured:
-                                break
-                        except Exception:
-                            continue
-                    # Microdata
-                    if not price_structured:
-                        try:
-                            for tag in soup.find_all(attrs={'itemscope': True, 'itemtype': True}):
-                                try:
-                                    item_type = tag.get('itemtype')
-                                    if item_type and 'product' in item_type.lower():
-                                        for child in tag.find_all(attrs={'itemprop': True}):
-                                            try:
-                                                prop = child.get('itemprop')
-                                                value = child.get('content') or child.get_text(strip=True)
-                                                if prop == 'price' and value:
-                                                    price_structured = str(value)
-                                                    break
-                                            except Exception:
-                                                continue
-                                        if price_structured:
-                                            break
-                                except Exception:
-                                    continue
-                        except Exception:
-                            pass
-                    # Compare numeric values if both exist
-                    def _parse_price_val(pstr: str) -> Optional[float]:
-                        try:
-                            # Remove currency symbols and commas
-                            val = re.findall(r'\d+[\.,]?\d*', pstr)
-                            if not val:
-                                return None
-                            # Replace comma with dot if comma used as decimal
-                            num = val[0].replace(',', '.')
-                            return float(num)
-                        except Exception:
-                            return None
-                    # Compare numeric values if both exist.  Use the final
-                    # resolved price (price_final) instead of price_page.
-                    if price_structured and 'price_final' in locals() and price_final:
-                        try:
-                            p_struct = _parse_price_val(price_structured)
-                            p_final = _parse_price_val(price_final)
-                        except Exception:
-                            p_struct = None
-                            p_final = None
-                        if p_struct is not None and p_final is not None:
-                            # Consider difference if greater than 1 cent
-                            try:
-                                if abs(p_struct - p_final) > 0.01:
-                                    issues.append((url, 'Price', 'CRITICAL', 'Displayed price differs from structured data price'))
-                            except Exception:
-                                pass
-                    # Validate currency symbol presence and format using price_final
-                    try:
-                        if 'price_final' in locals() and price_final and not re.search(r'[£$€]', price_final):
-                            issues.append((url, 'Price', 'CRITICAL', 'Missing currency symbol in displayed price'))
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
+                # Price consistency and currency symbol checks have been removed.
                 # Image format checks: ensure images use supported formats
                 try:
                     unsupported = 0
@@ -2246,13 +2144,11 @@ class LinkCrawler:
             pass
 
         # -----------------------------------------------------------------
-        # 4. Shopify platform and theme detection
-        try:
-            html_lower = html.lower() if html else ''
-            if 'cdn.shopify.com' in html_lower or 'myshopify.com' in html_lower or 'shopify' in html_lower:
-                issues.append((url, 'Platform', 'INFO', 'Shopify platform detected'))
-        except Exception:
-            pass
+        # 4. Shopify platform detection removed
+        #
+        # Previously the AI module appended a "Platform" issue when it detected
+        # Shopify in the page source.  This has been removed per updated
+        # requirements.
         # -----------------------------------------------------------------
         # Record all issues
         if issues:
@@ -3432,6 +3328,30 @@ def export_pdf(result, domain_clean, timestamp):
             except Exception:
                 continue
         lines.append("")
+
+    # Include page speed metrics if available
+    if getattr(result, 'pagespeed', None):
+        try:
+            ps = result.pagespeed
+            lines.append("HOMEPAGE PAGE SPEED")
+            lines.append("-" * 20)
+            load_time = ps.get('load_time')
+            size_bytes = ps.get('size_bytes')
+            requests = ps.get('requests')
+            # Format metrics for readability
+            try:
+                load_str = f"{float(load_time):.2f}s" if load_time is not None else 'N/A'
+            except Exception:
+                load_str = str(load_time)
+            try:
+                size_kb = f"{float(size_bytes) / 1024:.1f} KB" if size_bytes is not None else 'N/A'
+            except Exception:
+                size_kb = str(size_bytes)
+            req_str = str(requests) if requests is not None else 'N/A'
+            lines.append(f"Load Time: {load_str} | Size: {size_kb} | Requests: {req_str}")
+            lines.append("")
+        except Exception:
+            pass
 
     lines.append("=" * 60)
     lines.append("Generated by GMC Scout V1")

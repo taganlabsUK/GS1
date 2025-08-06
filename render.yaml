@@ -44,7 +44,7 @@ services:
       - key: SMTP_PASSWORD
         sync: false
       - key: FEEDBACK_EMAIL
-        value: "terry@terryecom.com"
+        value: "support@gmcscout.com"
       # Ensure production configuration for Flask
       - key: FLASK_ENV
         value: "production"
@@ -88,7 +88,7 @@ services:
       - key: SMTP_PASSWORD
         sync: false
       - key: FEEDBACK_EMAIL
-        value: "terry@terryecom.com"
+        value: "support@gmcscout.com"
       - key: FLASK_ENV
         value: "production"
     # Health check path should return a 200 OK when the app is healthy
