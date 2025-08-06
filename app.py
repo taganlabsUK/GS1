@@ -502,6 +502,13 @@ class LinkCrawler:
         # policy.  Each entry is the absolute URL of the policy page.
         self.analyzed_policy_pages: Set[str] = set()
 
+        # Collect per-page check results for consolidated logging.  Each
+        # entry in this dict maps a URL to a dictionary of check categories
+        # (e.g. 'trust', 'restricted', 'structured') and their pass/fail
+        # summaries.  At the end of each page crawl, these summaries are
+        # combined into a single log line.
+        self.page_check_results: Dict[str, Dict[str, str]] = {}
+
         # Parse robots.txt once at the start of the crawl.  This helps
         # identify any disallowed sections that could prevent Google
         # Merchant Center from accessing product or policy pages.  Results
@@ -1098,6 +1105,28 @@ class LinkCrawler:
             except Exception as e:
                 logger.debug(f"Error validating structured data for {url}: {e}")
 
+            # Consolidate check results for this page into a single log entry.
+            try:
+                # If we have collected partial results for this URL, assemble
+                # them into one summary line and append to debug_logs.
+                if url in self.page_check_results:
+                    parts = []
+                    page_res = self.page_check_results.get(url, {})
+                    for cat in ['trust', 'restricted', 'structured']:
+                        if cat in page_res:
+                            parts.append(page_res[cat])
+                    if parts:
+                        summary = f"{url} - " + ' | '.join(parts)
+                        with self.result.lock:
+                            self.result.debug_logs.append(summary)
+                    # Remove entry to free memory
+                    try:
+                        del self.page_check_results[url]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             # Extract all links
             links_found = 0
             for a_tag in soup.find_all("a", href=True):
@@ -1386,7 +1415,7 @@ class LinkCrawler:
                     policy_issues.append('product availability not specified')
         except Exception:
             pass
-        # Summarise results and add to debug log
+        # Summarise results and store for consolidated logging
         try:
             summary_parts = []
             if contact_issues:
@@ -1396,11 +1425,15 @@ class LinkCrawler:
             if ssl_issues:
                 summary_parts.append('ssl issues: ' + ', '.join(ssl_issues))
             if not summary_parts:
-                summary = f"{url} - Trust check: PASS"
+                summary = 'Trust: PASS'
             else:
-                summary = f"{url} - Trust check: FAIL - " + '; '.join(summary_parts)
-            with self.result.lock:
-                self.result.debug_logs.append(summary)
+                summary = 'Trust: FAIL - ' + '; '.join(summary_parts)
+            # Store summary in page_check_results
+            try:
+                d = self.page_check_results.setdefault(url, {})
+                d['trust'] = summary
+            except Exception:
+                pass
         except Exception:
             pass
         # Record issues if any exist
@@ -1470,20 +1503,19 @@ class LinkCrawler:
         if categories_found:
             with self.result.lock:
                 self.result.restricted_content_pages.append((url, categories_found))
-        # Add to debug log summarising restricted content check
+        # Store summary for restricted content check
         try:
             summary_parts = []
             if categories_found:
                 summary_parts.append('restricted categories: ' + ', '.join(categories_found))
             if meta_issues:
                 summary_parts.append('meta robots: ' + ', '.join(meta_issues))
-            # robots.txt disallows recorded separately; they are global and logged elsewhere
             if not summary_parts:
-                summary = f"{url} - Restricted check: PASS"
+                summary = 'Restricted: PASS'
             else:
-                summary = f"{url} - Restricted check: FAIL - " + '; '.join(summary_parts)
-            with self.result.lock:
-                self.result.debug_logs.append(summary)
+                summary = 'Restricted: FAIL - ' + '; '.join(summary_parts)
+            d = self.page_check_results.setdefault(url, {})
+            d['restricted'] = summary
         except Exception:
             pass
 
@@ -1588,14 +1620,14 @@ class LinkCrawler:
         if errors:
             with self.result.lock:
                 self.result.structured_data_issues.append((url, errors))
-        # Log structured data results
+        # Store structured data summary for consolidated logging
         try:
             if errors:
-                summary = f"{url} - Structured data: FAIL - " + '; '.join(errors)
+                summary = 'Structured: FAIL - ' + '; '.join(errors)
             else:
-                summary = f"{url} - Structured data: PASS"
-            with self.result.lock:
-                self.result.debug_logs.append(summary)
+                summary = 'Structured: PASS'
+            d = self.page_check_results.setdefault(url, {})
+            d['structured'] = summary
         except Exception:
             pass
 
