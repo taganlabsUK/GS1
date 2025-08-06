@@ -1899,6 +1899,8 @@ def download_debug_log():
     log_lines = result.debug_logs or ['No debug logs recorded.']
     log_text = '\n'.join(log_lines)
     file_bytes = io.BytesIO(log_text.encode('utf-8'))
+    # Reset pointer to the beginning so send_file can read from start
+    file_bytes.seek(0)
     filename = f"debug_log_{result.domain}_{session_id}.txt"
     return send_file(
         file_bytes,
